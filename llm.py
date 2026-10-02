@@ -343,9 +343,12 @@ class MockLLM:
                 "ending_direction": "开放式：堤上留下脚印，人未归",
                 # 开局物资清单：让第 1 章的撰稿人一开始就有一本账可比对。
                 # 故意给两样"会被消耗"的东西，便于离线验证账本更新与"已耗尽不可再用"。
+                # 带 count/unit 是有意的：账本只有给了件数才谈得上"逐章对账"，
+                # mock 也必须是一份**合规样例**（模糊量会触发策划侧的告警）。
                 "initial_items": [
-                    {"name": "半瓶矿泉水", "qty": "半瓶", "note": "主舱侧袋"},
-                    {"name": "手电筒", "qty": "1 支", "note": "电量不明"},
+                    {"name": "矿泉水", "count": 5, "unit": "瓶",
+                     "qty": "五天份的水，每天一瓶", "note": "背包侧袋"},
+                    {"name": "手电筒", "count": 1, "unit": "支", "note": "电量不明"},
                 ],
             }, ensure_ascii=False)
         if "ChapterExtender" in system:
@@ -409,13 +412,17 @@ class MockLLM:
             # 人物名在第 2 章故意带括号备注，用来离线验证「角色名归一后不裂条」
             who = "林岸（主角）" if idx == 2 else "林岸"
             # 物资变动按章给：第 1 章减量 → 第 2 章耗尽 + 新捡一件 → 第 3 章起无变动。
-            # 三条路径（改存量 / 标耗尽 / 新增）都能在离线测试里被覆盖到。
+            # 三条路径（改件数 / 标耗尽 / 新增）都能在离线测试里被覆盖到。
+            # 每一条都带 note：件数变了却不说原因会被结算的对账逻辑判为异常，
+            # mock 要演示的是"交代清楚"的正路，异常路径交给专门的单测。
             if idx == 1:
-                items = [{"name": "半瓶矿泉水", "qty": "只剩两口"},
-                         {"name": "手电筒", "qty": "1 支"}]
+                items = [{"name": "矿泉水", "count": 4, "unit": "瓶", "note": "本章喝掉一瓶"},
+                         {"name": "手电筒", "count": 1, "unit": "支", "note": "本章点亮一次"}]
             elif idx == 2:
-                items = [{"name": "半瓶矿泉水", "status": "consumed"},
-                         {"name": "塑料布", "qty": "1 张", "note": "第2章在路上捡到"}]
+                items = [{"name": "矿泉水", "status": "consumed",
+                          "note": "本章把剩下的四瓶分给了被困的邻居"},
+                         {"name": "塑料布", "count": 1, "unit": "张",
+                          "qty": "1 张", "note": "第2章在路上捡到"}]
             else:
                 items = []
             return json.dumps({

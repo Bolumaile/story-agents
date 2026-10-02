@@ -352,16 +352,30 @@ def test_planner_seeds_inventory_from_outline(mock_mode):
     app = graph_mod.build_graph()
     state = _run_chapters(app, initial_state(), 1)
     names = [i["name"] for i in state["memory"]["items"]]
-    assert "半瓶矿泉水" in names and "手电筒" in names
+    assert "矿泉水" in names and "手电筒" in names
+    # 手电筒这一章没被消耗，件数应原样保留策划给的值：
+    # 账本没有数字就谈不上逐章对账，这是"账目反复打回"那条的根。
+    lamp = next(i for i in state["memory"]["items"] if i["name"] == "手电筒")
+    assert (lamp["count"], lamp["unit"]) == (1, "支"), \
+        "策划给的件数没有进账本——账本没有数字就无法逐章对账"
 
 
-def test_inventory_tracks_qty_then_consumption(mock_mode):
-    """一条物资的完整生命周期：建账 → 改存量 → 标耗尽。"""
+def test_inventory_tracks_count_then_consumption(mock_mode):
+    """一条物资的完整生命周期：建账 → 改件数 → 标耗尽。
+
+    断言落在 count 而不是 qty：件数才是跨章比对的权威口径，
+    qty 只是给人看的描述（"约五天份"这类）。
+    """
     app = graph_mod.build_graph()
-    state = _run_chapters(app, initial_state(), 2)
-    water = next(i for i in state["memory"]["items"] if i["name"] == "半瓶矿泉水")
-    assert water["qty"] == "只剩两口", "第 1 章的存量变更没生效"
+    s1 = _run_chapters(app, initial_state(), 1)
+    water = next(i for i in s1["memory"]["items"] if i["name"] == "矿泉水")
+    assert water["count"] == 4, "第 1 章的件数变更没生效"
+    assert water["last_changed_chapter"] == 1
+
+    s2 = _run_chapters(app, initial_state(), 2)
+    water = next(i for i in s2["memory"]["items"] if i["name"] == "矿泉水")
     assert water["status"] == "consumed", "第 2 章的耗尽没生效"
+    assert water["count"] == 0, "标了已耗尽，件数必须归零（不能还留着正数）"
     assert water["last_changed_chapter"] == 2
 
 
@@ -419,6 +433,84 @@ def test_item_name_is_matched_after_normalization():
     items = out["memory"]["items"]
     assert len(items) == 1, f"同一件东西被拆成两条：{[i['name'] for i in items]}"
     assert items[0]["name"] == "折叠刀", "命中已有条目时应保留账本里的原名"
+
+
+# ── 账本对账（第二次实跑暴露的第 2 号缺口：结算静默采信）────────
+# 现场：ch2 末「四块饼干」→ ch3 正文「两块」，差额无交代，校对连报两轮都没改掉，
+# 账本最终落成「压缩饼干 2块 / status=consumed」——"已耗尽"却还剩 2 块。
+def _mem_with_items(items):
+    return {"chapter_summaries": [], "character_states": [],
+            "foreshadow_pool": [], "items": items}
+
+
+def test_settler_flags_consumed_with_remaining_count():
+    """同一条里既说「已耗尽」又给正数件数 → 判为矛盾，件数按 0 处理并告警。"""
+    notices = []
+    llm.set_notice_cb(lambda level, msg: notices.append((level, msg)))
+    out = _settler_with(
+        {"summary": "s", "item_changes": [
+            {"name": "压缩饼干", "count": 2, "unit": "块",
+             "status": "consumed", "qty": "两块"}]},
+        _mem_with_items([{"name": "压缩饼干", "count": 4, "unit": "块",
+                          "status": "available", "chapter": 2}]))
+    it = out["memory"]["items"][0]
+    assert it["status"] == "consumed", "状态必须被采纳"
+    assert it["count"] == 0, "既然已耗尽，件数不能还留着正数"
+    assert any("矛盾" in m for _, m in notices), f"自相矛盾没被告警：{notices}"
+
+
+def test_settler_flags_silent_count_drift():
+    """件数变了却不说原因 → 告警。抓的就是「数字在账本里凭空消失」。"""
+    notices = []
+    llm.set_notice_cb(lambda level, msg: notices.append((level, msg)))
+    out = _settler_with(
+        {"summary": "s", "item_changes": [{"name": "压缩饼干", "qty": "两块"}]},
+        _mem_with_items([{"name": "压缩饼干", "count": 4, "unit": "块",
+                          "status": "available", "chapter": 2}]))
+    assert out["memory"]["items"][0]["count"] == 2
+    assert any("未说明原因" in m for _, m in notices), f"静默采信没被抓出来：{notices}"
+
+
+def test_settler_accepts_explained_count_change():
+    """写了原因就不告警——要抓的是"静默"，不是"变化"本身。"""
+    notices = []
+    llm.set_notice_cb(lambda level, msg: notices.append((level, msg)))
+    out = _settler_with(
+        {"summary": "s", "item_changes": [
+            {"name": "压缩饼干", "count": 2, "unit": "块", "note": "本章吃掉两块"}]},
+        _mem_with_items([{"name": "压缩饼干", "count": 4, "unit": "块",
+                          "status": "available", "chapter": 2}]))
+    assert out["memory"]["items"][0]["count"] == 2
+    assert not [m for _, m in notices if "未说明原因" in m], \
+        f"交代了原因还被判异常，会逼出无意义的重写：{notices}"
+
+
+def test_settler_keeps_ledger_unit_when_change_omits_it():
+    """结算没写 unit 时沿用账本已有单位，否则对账口径会从"瓶"漂成无单位。"""
+    out = _settler_with(
+        {"summary": "s", "item_changes": [{"name": "矿泉水", "count": 4}]},
+        _mem_with_items([{"name": "矿泉水", "count": 5, "unit": "瓶",
+                          "status": "available", "chapter": 1}]))
+    it = out["memory"]["items"][0]
+    assert (it["count"], it["unit"]) == (4, "瓶")
+
+
+def test_planner_warns_when_inventory_has_no_countable_count(monkeypatch):
+    """策划给「约五天份」这类模糊量 → 告警；给了件数的那些不点名。
+
+    这条是"账目反复打回"的源头治理：模糊量会让撰稿与校对每章各算一个数。
+    """
+    notices = []
+    llm.set_notice_cb(lambda level, msg: notices.append((level, msg)))
+    monkeypatch.setattr(llm, "chat_json", lambda *a, **kw: {
+        "title": "T", "characters": [], "chapters": [{"index": 1, "title": "甲"}],
+        "initial_items": [{"name": "矿泉水", "qty": "约五天份"},
+                          {"name": "压缩饼干", "count": 6, "unit": "块"}]})
+    out = nodes.planner_node({"user_prompt": "末世短篇", "memory": {}})
+    coin = out["memory"]["items"][0]
+    assert coin["name"] == "矿泉水" and coin["count"] is None
+    msg = next(m for _, m in notices if "没有可计数的件数" in m)
+    assert "矿泉水" in msg and "压缩饼干" not in msg, f"点名点错了：{msg}"
 
 
 # ── 人物快照：角色名归一 ─────────────────────────────────────

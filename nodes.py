@@ -49,6 +49,18 @@ def _rank_open_foreshadows(open_pool, idx: int) -> list:
     return sorted(open_pool, key=key)
 
 
+def _qty_display(count, unit, qty) -> str:
+    """账本存量的展示口径：有件数就用件数（5 瓶），没有才退回描述。
+
+    为什么优先件数：撰稿人与校对都按这个数写、按这个数核；描述里可能混着
+    "约五天份，每天一瓶"这类换算说明，直接丢给模型会各自算出自家的数。
+    """
+    u = str(unit or "").strip()
+    if count is not None:
+        return f"{count}{u}" if u else str(count)
+    return str(qty or "").strip()
+
+
 def _memory_context(state: StoryState, plan: dict = None) -> str:
     """故事记忆：必带项（未回收伏笔 + 人物快照 + 物资账本）+ 检索项（相关前情摘要）。
 
@@ -109,8 +121,8 @@ def _memory_context(state: StoryState, plan: dict = None) -> str:
         gone = [i for i in items if (i.get("status") or "available") != "available"]
         lines.append("【物资账本（必带）——只能用清单里的东西】")
         for it in avail:
-            qty = (it.get("qty") or "").strip()
-            seg = f"- {it.get('name')}" + (f"（存量：{qty}）" if qty else "")
+            disp = _qty_display(it.get("count"), it.get("unit"), it.get("qty"))
+            seg = f"- {it.get('name')}" + (f"（存量：{disp}）" if disp else "")
             note = (it.get("note") or "").strip()
             if note:
                 seg += f"｜{note}"
@@ -247,10 +259,24 @@ def planner_node(state: StoryState) -> dict:
     # （实测第 1 章 0 轮重写通过，这份矛盾被当正典固化，之后每章都要重新审一遍）。
     if not memory.items:
         memory.items = [
-            models.Item(name=it.name.strip(), qty=it.qty.strip(), note=it.note.strip(),
+            models.Item(name=it.name.strip(), count=it.count, unit=it.unit.strip(),
+                        qty=it.qty.strip(), note=it.note.strip(),
                         status="available", chapter=1, last_changed_chapter=1)
             for it in outline.initial_items if it.name.strip()
         ]
+    # 账本要「能逐章对账」，前提是它带着数字。策划给「约五天份」这类模糊量时，
+    # 后续每一章的撰稿与校对都会各自换算一遍、各自算出不同的数 —— 实测这是烧掉
+    # 重写轮次的最大一块（7 轮里有 ch2/ch3 各 3 轮，约六成 critical 是账目类）。
+    # 这里只提醒、不替它换算：猜出来的数字比"没有数字"更危险（会立刻触发误报）。
+    fuzzy = [it.name for it in memory.items
+             if it.count is None and models._qty_to_count(it.qty) is None]
+    if fuzzy:
+        shown = "、".join(fuzzy[:5]) + (" 等" if len(fuzzy) > 5 else "")
+        llm.emit_notice(
+            "warn",
+            f"策划给的开局物资里，{len(fuzzy)} 项没有可计数的件数（{shown}）。"
+            f"后续章节要按件数核对消耗，模糊量会让撰稿与校对各算一个数、反复打回重写；"
+            f"建议改成具体件数（写「5 瓶」而不是「约五天份」）。")
     return {"outline": outline.model_dump(), "memory": memory.model_dump()}
 
 
@@ -530,8 +556,9 @@ def _empty_memory() -> dict:
 
 
 def _item_line(it) -> str:
-    """把账本条目渲染成一行，给记忆结算员看（含存量与状态标注）。"""
-    qty = f"（存量：{it.qty}）" if it.qty and it.status == "available" else ""
+    """把账本条目渲染成一行，给记忆结算员看（含件数与状态标注）。"""
+    disp = _qty_display(it.count, it.unit, it.qty)
+    qty = f"（存量：{disp}）" if disp and it.status == "available" else ""
     tag = {"consumed": "【已耗尽】", "lost": "【已丢失】"}.get(it.status, "")
     return f"- {it.name}{qty}{tag}"
 
@@ -630,8 +657,13 @@ def memory_settler_node(state: StoryState) -> dict:
             mem.character_states.append(
                 models.CharacterState(name=cu.name, state=cu.state))
 
-    # ── 物资账本：新增 or 更新，名字同样走归一匹配 ──
+    # ── 物资账本：新增 or 更新，名字同样走归一匹配；同时逐件对账 ──
+    # 为什么必须对账：第二次实跑暴露「结算静默采信本章数字」——ch2 末写 4 块饼干，
+    # ch3 正文只剩 2 块且没交代去向，校对连报两轮都没改掉，账本最终落成
+    # 「压缩饼干 2块 / status=consumed」：**"已耗尽"却还剩 2 块，字段语义自相矛盾**。
+    # 静默采信会把这类硬伤固化成正典，所以这里把差额与矛盾都显式报出来。
     by_key = {models.canon_name(it.name): it for it in mem.items if it.name.strip()}
+    recon = []
     for ch in delta.item_changes:
         name = ch.name.strip()
         if not name:
@@ -641,8 +673,8 @@ def memory_settler_node(state: StoryState) -> dict:
         if hit is None:
             # 本章首次出现的物资（含捡到、别人给的、买来的）。
             # 状态缺省按可用处理——它此刻确实在手上。
-            it = models.Item(name=name, qty=ch.qty, note=ch.note,
-                             status=ch.status or "available",
+            it = models.Item(name=name, count=ch.count, unit=ch.unit, qty=ch.qty,
+                             note=ch.note, status=ch.status or "available",
                              chapter=idx, last_changed_chapter=idx)
             mem.items.append(it)
             by_key[key or name] = it
@@ -650,13 +682,45 @@ def memory_settler_node(state: StoryState) -> dict:
         # 已有物资：只覆盖模型明确给出的字段。
         # 特别地，status 为空表示"状态没变"，绝不能当成 available 写回去
         # ——那会让已经吃完的东西复活，正是这本账要防的事。
+        prev_count = hit.count
+        unit = hit.unit or ch.unit
+        if ch.unit and not hit.unit:
+            hit.unit = ch.unit
         if ch.qty:
             hit.qty = ch.qty
+
+        gone = ch.status in ("consumed", "lost")
+        new_count = ch.count
+        if gone:
+            # 同一条里既说"没了"又说"还剩几件"：以状态为准，件数归零。
+            if new_count not in (None, 0):
+                label = "已耗尽" if ch.status == "consumed" else "已丢失"
+                recon.append(
+                    f"{hit.name}：结算同时给出「{label}」与剩余量"
+                    f"「{ch.qty or new_count}」，两者矛盾，件数已按 0 处理")
+                hit.qty = ""
+            new_count = 0
         if ch.status:
             hit.status = ch.status
         if ch.note:
             hit.note = ch.note
+        if new_count is not None:
+            hit.count = new_count
+        # 件数变了却不说原因 = 数字在账本里凭空消失/出现，正是要抓的静默采信。
+        if (not gone and prev_count is not None and new_count is not None
+                and new_count != prev_count and not ch.note.strip()):
+            recon.append(
+                f"{hit.name}：件数由 {prev_count}{unit} 变为 {new_count}{unit}，"
+                f"结算未说明原因（正文里可能凭空消耗或新增），请核对")
         hit.last_changed_chapter = idx
+
+    if recon:
+        shown = "；".join(recon[:4])
+        more = f" 等共 {len(recon)} 处" if len(recon) > 4 else ""
+        llm.emit_notice(
+            "warn",
+            f"第{idx}章物资账本对账发现 {len(recon)} 处异常：{shown}{more}。"
+            f"账本已按更严格的一侧记录，建议核对正文与账本是否对得上。")
 
     # ── 伏笔超期巡检：伏笔烂尾是长篇最伤读者的问题，这里主动兜住 ──
     stale = _stale_foreshadows(mem.foreshadow_pool, idx)
