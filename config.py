@@ -88,3 +88,31 @@ TEMPERATURE_PLANNER = 0.7
 TEMPERATURE_WRITER = 0.85
 TEMPERATURE_REVIEWER = 0.2   # 校对要稳，低温
 TEMPERATURE_POLISHER = 0.6
+
+
+# ── 记忆检索（memory_index.py）────────────────────────────────────
+# 写第 N 章时，从历史记忆里取多少条「相关补充材料」进 prompt。
+# 注意：「未回收伏笔」与「人物当前快照」不受此限制，属于必带项——
+# 这两类一旦被检索淘汰，长篇立刻出现设定崩坏。
+MEMORY_TOP_K = int(os.getenv("STORY_MEMORY_TOP_K", "8"))
+
+
+# ── 伏笔状态机 ───────────────────────────────────────────────────
+# 「埋太久没动」的告警阈值（单位：章）。
+# 某条伏笔连续这么多章既没被推进（progressing）、也没被回收（resolved），
+# 就在看板提示用户。伏笔烂尾是长篇最伤读者的问题，这条用来兜住它。
+FORESHADOW_STALE_CHAPTERS = int(os.getenv("STORY_FORESHADOW_STALE", "5"))
+
+
+# ── 去 AI 味 ────────────────────────────────────────────────────
+# 规则层检测（纯代码统计，不消耗 token）：高频连接词、句长方差、
+# 总结句密度、比喻密度，超阈值只在看板告警，不自动改稿。
+STYLE_CHECK_ENABLED = os.getenv("STORY_STYLE_CHECK", "1") == "1"
+# 模型层：给润色环节追加「去 AI 腔」指令（不增加调用次数）。
+DESLOP_IN_POLISHER = os.getenv("STORY_DESLOP", "1") == "1"
+
+
+# ── 校对拆分 ────────────────────────────────────────────────────
+# 校对拆成并行的三个 specialist（人物一致性 / 逻辑设定 / 节奏注水）。
+# 关掉「节奏」这一路可省一次调用：节点仍存在但直接返回空，不动图结构。
+REVIEW_PACING_ENABLED = os.getenv("STORY_REVIEW_PACING", "1") == "1"
