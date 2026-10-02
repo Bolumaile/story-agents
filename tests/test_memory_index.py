@@ -114,3 +114,35 @@ def test_index_reflects_current_memory_not_a_stale_snapshot():
     del mem["foreshadow_pool"][0]
     hits = mi.select_relevant(mem, "折角", limit=3)
     assert not any(h["ref_id"] == "F1" for h in hits)
+
+
+# ── 单字虚词的噪音（实测退化案例）─────────────────────────────
+def test_single_char_noise_tokens_do_not_match_everything():
+    """「第」「章」这类字几乎每条摘要都有，必须挡在检索之外。
+
+    不过滤的话一次命中一整片，bm25 的相关度差异归零，
+    检索会悄悄退化成"按写入顺序取前 N 条"——实测症状：
+    查「第16章 x」时返回的 8 条全是第 1–8 章，而第 16 章根本不该由别人顶替。
+    """
+    mem = {"chapter_summaries": [{"chapter": i, "summary": f"第{i}章梗概"}
+                                 for i in range(1, 13)]}
+    assert mi.select_relevant(mem, "第16章 x", limit=8) == []
+
+
+def test_single_char_query_is_a_known_limitation_not_a_crash():
+    """单字中文查询是 bigram 方案的已知边界，这里把边界写清楚而不是假装能命中。
+
+    索引里存的是「瘦猫」「猫蜷」这样的二元组，FTS5 是 token 精确匹配，
+    所以单字「猫」查不到——要支持得改成分词器或加前缀通配，
+    但那会让单字噪音回到索引里，得不偿失。用例锁住行为：返回空列表，不抛异常。
+    """
+    mem = {"chapter_summaries": [{"chapter": 3, "summary": "便利店的瘦猫蜷在货架下"}]}
+    assert mi.select_relevant(mem, "猫", limit=3) == []
+    # 换成两字词就能命中——这才是检索的真实可用形态
+    assert [h["chapter"] for h in mi.select_relevant(mem, "瘦猫", limit=3)] == [3]
+
+
+def test_noise_token_alone_query_falls_back_instead_of_failing():
+    """整条查询都是虚词时，宁可带回噪音也不要空手而归。"""
+    mem = {"chapter_summaries": [{"chapter": 1, "summary": "第1章：开工"}]}
+    assert isinstance(mi.select_relevant(mem, "的", limit=3), list)
