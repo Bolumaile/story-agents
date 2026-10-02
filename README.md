@@ -1,7 +1,21 @@
 # 小说多 Agent 创作工坊
 
-分工式多 Agent 流水线 + 评审回退：策划 → 撰稿 → 校对（可打回重写）→ 润色 → 记忆结算。
+分工式多 Agent 流水线 + 评审回退：**策划（含场景节拍）→ 撰稿 → 三路并行校对（可打回重写）→ 润色（含去 AI 腔）→ 记忆结算**。
 模型：DeepSeek API / 任意 OpenAI 兼容本地服务（LM Studio、Ollama 等）。框架：LangGraph。
+
+## 核心特性
+
+| 特性 | 一句话说明 |
+|---|---|
+| **场景节拍** | 策划不只给章节梗概，还拆出 3–5 个节拍（目标/冲突/转折/字数/情绪温度），撰稿按拍推进，长章不再前松后紧 |
+| **三路并行校对** | 人物一致性、逻辑时间线设定、节奏篇幅各由一个 specialist 独立检查，额度专款专用，不再互相挤占 |
+| **记忆按需检索** | 写第 N 章时只带「未回收伏笔 + 人物快照（必带）」和「相关前情摘要（SQLite FTS5 检索）」，上下文不随章数线性膨胀 |
+| **伏笔状态机** | 伏笔有 open / progressing / deferred / resolved 四态，记录最后推进章节；连续多章没动静会自动提醒，防烂尾 |
+| **去 AI 味** | 润色环节带去 AI 腔指令；另有纯代码的规则层体检（套话密度、句长节奏、比喻密度、收束句），只提示不擅自改稿 |
+| **强类型约束** | 所有模型输出过 Pydantic，缺字段落默认值、中文枚举自动归一，脏数据不会打断流水线也不往下游传播 |
+
+**稳定性工程**（同类项目的高频短板，这里都兜住了）：流式空闲超时、JSON 自动修复链 +
+纠错重试、校对降级放行、Mock 全离线验证。
 
 ![网页端表单页](docs/images/ui-form.png)
 
@@ -33,13 +47,24 @@ python main.py --prompt "测试" --chapters 2 --mock
 ## 开发与测试
 
 ```bash
-python -m pytest      # 54 项，全部离线，约 1.6 秒
+python -m pytest      # 130 项，全部离线，约 1.7 秒
 ```
 
-测试不联网、不烧 token：`MockLLM` 能跑通整条流水线，JSON 修复链是纯字符串处理。
-覆盖四块：JSON 修复链（逐个对应踩过的坑）、图路由与回退、节点兜底行为、
-三条降级路径（校对 fail-open / 无 critical 转 pass / 记忆结算失败不中断）。
-**改 `llm.py`、`nodes.py` 或 `graph.py` 之前先跑一遍。**
+测试不联网、不烧 token：`MockLLM` 能跑通整条流水线，JSON 修复链与规则层检测都是纯字符串处理。
+
+| 测试文件 | 覆盖内容 |
+|---|---|
+| `test_json_repair.py` | JSON 修复链（逐个对应踩过的坑）、流式空闲超时 |
+| `test_routing.py` | 图路由与回退、三路并行/汇合的图结构、节拍透传、分层记忆组装、章级计划兜底 |
+| `test_pipeline_mock.py` | 端到端冒烟、三路校对各自 fail-open、伏笔状态机、陈旧伏笔告警、风格体检落盘 |
+| `test_models.py` | Pydantic 归一：缺字段、类型强转、中文枚举收敛、告警去重 |
+| `test_memory_index.py` | 中文 bigram 分词、FTS5 检索命中与无索引时降级 |
+| `test_style_check.py` | 套话/句长/比喻/收束句各自判据与样本量门槛 |
+
+降级路径均已单独构造用例：校对单路超时只跳过该路、三路都无 critical 转 pass、
+记忆结算失败不中断、检索不可用时退回「必带项 + 截断」。
+
+**改 `llm.py`、`nodes.py`、`graph.py` 或 `models.py` 之前先跑一遍。**
 
 ## 网页端功能
 
@@ -73,20 +98,34 @@ python -m pytest      # 54 项，全部离线，约 1.6 秒
 ## 架构
 
 ```
-START ─(无策划案)→ planner → writer → reviewer ─(fail 且未超轮数)→ bump_round → writer
-      └(已有策划案)→ writer                └─(pass 或超轮数)→ polisher → memory_settler → END
+START ─(无策划案)→ planner ─┐
+      └(已有策划案)─────────┴→ writer ─┬→ reviewer_ooc   ─┐
+                                      ├→ reviewer_logic ─┼→ merge_reviews
+                                      └→ reviewer_pacing ─┘        │
+                                                                   ├─(fail 且未超轮)→ bump_round → writer
+                                                                   └─(pass 或超轮)──→ polisher → memory_settler → END
 ```
+
+> 三路校对并行写**各自独立的 state key**（`review_comments_ooc` / `_logic` / `_pacing`），
+> 避免并行覆盖，最后由 `merge_reviews` 汇合判 verdict。
 
 | Agent | 职责 | 输出 |
 |---|---|---|
-| 策划 Planner | 需求 → 梗概/人物卡/分章大纲/转折点 | 严格 JSON |
-| 撰稿 Writer | 按大纲+人设写章节正文，收到反馈定向重写 | 正文 |
-| 校对 Reviewer | OOC / 时间线 / 设定 / 逻辑四维校验 | JSON 清单（critical→打回，minor→转润色） |
-| 润色 Polisher | 只改措辞节奏，不碰剧情与动机 | 正文 |
-| 记忆结算 MemorySettler | 章节摘要 + 伏笔池 + 人物状态快照 | JSON 增量 |
+| 策划 Planner | 需求 → 梗概/人物卡/分章大纲/转折点 + **每章场景节拍** | 严格 JSON |
+| 撰稿 Writer | 按大纲与节拍写正文，收到反馈定向重写 | 正文 |
+| 校对 `reviewer_ooc` | 只看人物一致性（性格/动机/禁忌） | JSON 清单 |
+| 校对 `reviewer_logic` | 只看时间线、设定一致性、剧情逻辑 | JSON 清单 |
+| 校对 `reviewer_pacing` | 只看节奏、注水、篇幅、节拍落实 | JSON 清单 |
+| 汇合 `merge_reviews` | 合并三路意见（critical 排前），统一判定 verdict | 写入 `review_comments` |
+| 润色 Polisher | 只改措辞节奏，不碰剧情与动机；附带**去 AI 腔** | 正文 |
+| 记忆结算 MemorySettler | 章节摘要 + 伏笔状态 + 人物状态快照 | JSON 增量（过 schema 校验） |
 
-- **全局记忆**：策划案 + 故事记忆（State 持久跨章）；写新章时不带全书正文，只带「前情摘要 + 伏笔池 + 人物快照 + 上一章全文」。
-  注意：这几块目前是**全量累积**后塞进 prompt，写到几十章仍会线性膨胀——这正是「已知边界」第 2 条。
+- **全局记忆**：策划案 + 故事记忆（State 持久跨章）。写新章时**不带全书正文**，只带：
+  - **必带项**：未回收伏笔、人物当前快照——这两类漏掉会直接崩设定，不参与检索淘汰
+  - **检索项**：用本章标题 + 梗概 + 节拍当查询词，从历史摘要中取 top-k（`MEMORY_TOP_K`，默认 8）
+
+  检索走 **SQLite FTS5**（Python 标准库自带，零新依赖），中文用 bigram 分词规避
+  FTS5 对中文不友好的问题，详见 `memory_index.py`。
 - **回退保护**：`MAX_REVISION_ROUNDS`（默认 3）防无限循环，超轮强制放行并保留意见。
 - **禁止内容**：表单填的禁令同时注入撰稿（规避）、校对（核查）、润色三处。
 
@@ -109,7 +148,21 @@ START ─(无策划案)→ planner → writer → reviewer ─(fail 且未超轮
 | 通道 | 触发时机 | 前端表现 |
 |---|---|---|
 | `llm.set_progress_cb` | 每收到一段流式输出 | 看板实时显示「已生成 N 字」 |
-| `llm.emit_notice` | 校对被跳过 / 记忆结算失败等降级 | 黄色告警条 |
+| `llm.emit_notice` | 见下 | 黄色告警条（`warn`）/ 蓝色提示条（`info`） |
+
+`notice` 的触发点共 6 处，每处都对应一条「不中断流水线」的降级或提醒：
+
+| 级别 | 时机 |
+|---|---|
+| `warn` | 某路校对结果无法解析 → 该维度跳过，章节继续 |
+| `info` | 校对判定 fail → 列明各维度 critical 条数并打回 |
+| `info` | 风格体检有提示 → 附套话/句长/比喻/收束句的各项读数 |
+| `warn` | 记忆结算失败 → 本章照常定稿，后续章节缺这部分前情 |
+| `warn` | 伏笔连续 ≥ `FORESHADOW_STALE_CHAPTERS` 章未推进 → 提醒防烂尾 |
+| `warn` | 模型输出撞长度上限被截断 |
+
+模型输出里的脏数据（枚举写了中文、字段缺失、类型不对）由 `models.py` 归一并经
+`emit_notice` 汇总上报，**去重后**只提醒一次，不会 50 条一起刷屏。
 
 服务端存档落在四个时机：**planner 完成、每章定稿、全部完成、异常分支**。
 写 `.tmp` 后 `os.replace` 原子替换——断电也不会留下半个文件。
@@ -118,17 +171,20 @@ START ─(无策划案)→ planner → writer → reviewer ─(fail 且未超轮
 
 ```
 story-agents/
-├── config.py          # API 配置、重写轮数上限、.env 读取
+├── config.py          # API 配置、重写轮数、记忆/伏笔/去 AI 味各开关、.env 读取
 ├── state.py           # StoryState 全局共享状态
+├── models.py          # Pydantic 模型层：策划案/校对意见/伏笔/记忆的 schema 与归一
+├── memory_index.py    # 记忆检索（SQLite FTS5 + 中文 bigram 分词，零新依赖）
+├── style_check.py     # 去 AI 味的规则层检测（套话/句长/比喻/收束句密度）
 ├── prompts.py         # 各角色的 System Prompt
 ├── llm.py             # LLM 封装（流式/超时/JSON 修复链）+ MockLLM 离线测试
-├── nodes.py           # 节点实现（含 meta 材料注入）
-├── graph.py           # LangGraph 调度器 + 回退路由
+├── nodes.py           # 节点实现（含 meta 材料注入、三路校对、汇合判定）
+├── graph.py           # LangGraph 调度器 + 三路并行 + 回退路由
 ├── main.py            # CLI 入口
 ├── web/
 │   ├── server.py      # FastAPI + SSE 进度推送 + 会话落盘/恢复
 │   └── static/index.html  # 表单页（人物卡动态增删、本机记忆）
-├── tests/             # pytest 最小测试集（离线，54 项）
+├── tests/             # pytest 测试集（离线，130 项，约 1.7 秒）
 ├── docs/
 │   ├── 优化建议-对比同类项目.md   # 横向调研：能力矩阵 + P0–P3 清单
 │   └── images/        # README 截图
@@ -136,7 +192,7 @@ story-agents/
 ├── .env.example       # 环境变量样例与取舍说明
 ├── requirements.txt   # 依赖清单（顶层）
 ├── requirements.lock.txt  # pip freeze 精确版本
-├── pyproject.toml     # 仅放 pytest 配置
+├── pyproject.toml     # 项目元信息（名称/许可/作者）+ pytest 配置
 └── outputs_web/       # 网页端产物（不进 git）
     ├── _session.json  # 上次会话存档（策划案+章节+记忆），「新建故事」时清掉
     └── run_*/         # 每次运行的章节 md 与合稿
@@ -146,13 +202,21 @@ story-agents/
 
 **本轮已核实**（2026-10-02，含 README 与功能矩阵比对）：
 
+**本轮已核实**（2026-10-02，含 README 与功能矩阵比对）；方括号内为本工程的采纳情况：
+
 - **Narcooo/inkos**：记忆分「权威 JSON + 可重建的检索投影」两层，伏笔状态机带 schema 校验。
-  本工程的 memory_settler 是其简化版；检索投影（SQLite FTS5）是值得借鉴的下一步。
+  memory_settler 是其简化版；检索投影〔已落地：`memory_index.py`，含中文 bigram 分词〕。
+  未跟进的一点——inkos 对脏数据是**拒绝**，本工程改**归一 + 告警**（`models.py`）。
 - **HuangLeijiana/novel-agent**：12 Agent；阶段级人类确认（`interrupt()`）；按 Agent 分级选模型。
+  〔均未落地，见「已知边界」〕
 - **14790897/Novel-Factory-Multi-Agent**：场景节拍（Scene Beats）把粗纲扩成场景；联网检索文风并提炼 brief。
+  〔场景节拍已落地；联网检索文风未做〕
 - **bodinggg/LangGraph-based-Novel-by-Agents**：Supervisor 编排 4 个 specialist 并行检查；检查点断点恢复。
+  〔多路并行已落地：三路 specialist + merge 汇合；检查点恢复未做〕
 - **MaoXiaoYuZ/Long-Novel-GPT**：大纲→章节→正文三段扩写控篇幅；实时显示调用费用。
+  〔费用统计未做〕
 - **YILING0013/AI_NovelGenerator**：语义检索注入历史细节 + 一致性检查器。
+  〔已落地：FTS5 全文检索版（非向量）+ 三路一致性校对〕
 
 **尚未复核**（引用自其他项目 README 或社区横评，未亲自验证）：
 
@@ -163,17 +227,22 @@ story-agents/
 
 完整调研、能力矩阵与按优先级排序的优化清单见
 **[`docs/优化建议-对比同类项目.md`](docs/优化建议-对比同类项目.md)**（25 条建议，每条含落点文件）。
-这里只列最关键的三条：
 
-1. **章内缺「场景节拍」层**：策划目前只到「章」级，撰稿一次写整章，长章容易前松后紧
-2. **记忆是全量塞进 prompt，不是检索**：写到几十章会膨胀且稀释注意力（建议 SQLite FTS5，标准库零依赖）
-3. **工程化刚起步**：已有测试与 git 基线；还缺 Docker、按 Agent 分级模型、token/费用统计、
-   中途人工干预、书库（当前同一时间只能写一本）
+**已完成**（P0 + P1，2026-10-02）：
 
-另有两个功能层面的已知边界：
+- ✅ 章内「场景节拍」层——策划拆到 3–5 拍，撰稿按拍推进（原建议第 4 条）
+- ✅ 记忆检索化——SQLite FTS5 + 中文 bigram 分词，必带项与检索项分层（第 5 条）
+- ✅ 伏笔状态机——四态 + 最后推进章节 + 超期巡检（第 6 条）
+- ✅ 校对拆分——三路 specialist 并行 + 汇合判定（第 7 条）
+- ✅ 去 AI 腔——润色指令 + 规则层体检（第 8 条）
+- ✅ Pydantic 强类型约束——`models.py` 统一归一（第 9 条）
 
-4. 人物是提示词级约束（人设卡+禁忌+快照），非独立 agent
-5. `config` 为进程级单例，网页端同一时间只支持一个生成任务（已加锁）
+**尚未做**：
+
+1. **工程化**：缺 Docker / 容器化、按 Agent 分级选模型、token 与费用统计
+2. **交互**：无中途人工干预（人工确认/改稿后再续），当前是「一键跑完」
+3. **多书并行**：`config` 为进程级单例，网页端同一时间只能写一本（已加锁）
+4. **人物仍是提示词级约束**（人设卡 + 禁忌 + 快照），非独立 agent
 
 ## 许可与致谢
 
