@@ -109,7 +109,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
   padding:10px 14px;font-size:13px;color:#7c6428;margin-bottom:16px;line-height:1.8}
 #mockWarn{background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;padding:10px 14px;
   font-size:13px;color:#8e2b23;margin-bottom:16px;line-height:1.8}
-#toasts{position:fixed;left:50%;transform:translateX(-50%);top:14px;z-index:99;
+#toasts{position:fixed;left:50%;transform:translateX(-50%);top:14px;z-index:400;
   display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;max-width:90vw}
 #toasts .t{background:#2b2620;color:#fff;border-radius:8px;padding:9px 18px;font-size:13px;
   box-shadow:0 4px 16px rgba(0,0,0,.18)}
@@ -118,9 +118,18 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #jsState{font-size:12px;border-radius:8px;padding:7px 12px;margin-bottom:14px;line-height:1.6}
 #jsState.off{background:#fdf0ee;border:1px solid #eebfb6;color:#8e2b23;font-weight:bold}
 #jsState.on{background:#eef6ef;border:1px solid #cfe3d2;color:#2f6a3a}
-#confirmBar{display:none;background:#fbf6ea;border:1px solid #ead9b8;border-radius:8px;
-  padding:10px 14px;font-size:13px;color:#7c6428;margin-bottom:14px;align-items:center;
-  gap:12px;flex-wrap:wrap}
+/* 确认框：必须做成「铺满视口的模态」，不能是文档流里的一条横幅。
+   原先它挂在页面最顶部，而「开始创作」按钮在页面底部 —— 用户点下去看不到
+   任何反应，要手动滚到顶端才发现有提示。模态层不受滚动位置影响。 */
+#confirmBar{display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(28,24,20,.42);align-items:center;justify-content:center;padding:24px}
+#confirmBar .cf-box{background:#fbf6ea;border:1px solid #ead9b8;border-radius:12px;
+  padding:18px 20px;font-size:13.5px;color:#7c6428;max-width:470px;width:100%;
+  line-height:1.8;box-shadow:0 14px 44px rgba(0,0,0,.3)}
+#confirmBar #confirmText{display:block;white-space:pre-wrap;word-break:break-word}
+#confirmBar .cf-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;
+  flex-wrap:wrap}
+#confirmBar .cf-actions button{padding:7px 16px;font-size:13px;letter-spacing:.4px}
 #errBox{display:none;background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;
   padding:10px 14px;font-size:12px;color:#8e2b23;margin-bottom:14px;
   font-family:Consolas,monospace;white-space:pre-wrap;line-height:1.7}
@@ -174,10 +183,16 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <div id="jsState" class="off">⚠ 页面脚本尚未运行 —— 若此处持续为红色，说明当前预览面板禁用了 JavaScript，
     请用 Chrome / Edge 直接打开 <b>http://127.0.0.1:8765</b>（按钮才会有反应）。</div>
   <div id="errBox"></div>
-  <div id="confirmBar">
-    <span id="confirmText"></span>
-    <button type="button" class="mini" id="confirmYes">确定</button>
-    <button type="button" class="mini" id="confirmNo">取消</button>
+  <!-- 确认框：铺满视口的模态层（见 #confirmBar 的 CSS 注释）。
+       role/aria-modal 让读屏软件能正确播报，而不是当成普通正文。 -->
+  <div id="confirmBar" role="dialog" aria-modal="true" aria-labelledby="confirmText">
+    <div class="cf-box">
+      <div id="confirmText"></div>
+      <div class="cf-actions">
+        <button type="button" class="mini" id="confirmNo">取消</button>
+        <button type="button" id="confirmYes">确定</button>
+      </div>
+    </div>
   </div>
 
   <div id="restoreBar" style="display:none;background:#eef6ef;border:1px solid #cfe3d2;color:#245a30;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.75"></div>
@@ -417,14 +432,28 @@ function toast(msg,type){
   setTimeout(()=>{d.style.transition='opacity .3s';d.style.opacity='0';
     setTimeout(()=>d.remove(),320);},type==='err'?4200:2400);
 }
-function askConfirm(text,onYes){
+/* 确认框。为什么不用原生 confirm：原生弹窗会阻塞整个页面（连提示 toast 都刷不出来），
+   而且在浏览器设置里可以被屏蔽掉。
+   yesLabel 用于把动作说清楚——「确定」两个字说不清"这一下会清掉东西"。 */
+function askConfirm(text,onYes,yesLabel){
   const bar=document.getElementById('confirmBar');
   if(!bar){if(window.confirm(text))onYes();return;}
   document.getElementById('confirmText').textContent=text;
-  bar.style.display='flex';
   const yes=document.getElementById('confirmYes'),no=document.getElementById('confirmNo');
-  const close=()=>{bar.style.display='none';yes.onclick=null;no.onclick=null;};
-  yes.onclick=()=>{close();onYes();};no.onclick=close;
+  yes.textContent=yesLabel||'确定';
+  const onKey=(e)=>{if(e.key==='Escape')close();};
+  const close=()=>{
+    bar.style.display='none';yes.onclick=null;no.onclick=null;bar.onclick=null;
+    document.removeEventListener('keydown',onKey);
+  };
+  yes.onclick=()=>{close();onYes();};
+  no.onclick=close;
+  bar.onclick=(e)=>{if(e.target===bar)close();};      /* 点背景 = 取消 */
+  document.addEventListener('keydown',onKey);
+  bar.style.display='flex';
+  /* 默认焦点给「取消」：确认框多半对应"要清掉东西"这类不可逆操作，
+     让回车落在安全的一侧（原生 confirm 也是这个默认行为，别丢）。 */
+  no.focus();
 }
 
 /* ───────── 本机记忆：API 配置 + 表单草稿 + 上次创作进度 ─────────
@@ -1222,12 +1251,19 @@ async function generate(mode){
   if(running)return;
   const f=collectForm();
   if(!f.requirement){toast('核心需求不能为空 —— 请填写【核心需求】，或点上方「填充示例」快速试跑','err');return;}
-  // 全新创作会覆盖服务端的那份会话存档：已有章节时先问一句，免得误清
-  if(mode!=='continue'&&hasSession&&runData.chapters.length){
-    askConfirm('这次是【全新创作】。\n\n本页现有 '+runData.chapters.length+
-      ' 章已定稿内容会被清空，之后也无法再「续写」这一篇。\n'
-      +'（已写好的 md / json 文件仍保存在 outputs_web 里，不会被删除。）\n\n确定开始新故事吗？',
-      ()=>startGenerate(mode,f));
+  // 全新创作会覆盖服务端那份会话存档：只要「页面上有章节」或「服务端有存档」，
+  // 就有东西会被清掉，必须先问一句。
+  // 原判定是 hasSession && runData.chapters.length —— 漏了「服务端有存档但页面还没
+  // 恢复出来」的情况，那时照样会覆盖掉别人的进度却不吭声。
+  if(mode!=='continue'&&(runData.chapters.length||hasSession)){
+    const n=runData.chapters.length;
+    askConfirm('这次是【全新创作】，会覆盖当前的进度存档。\n\n'
+      +(n?('· 本页现有的 '+n+' 章已定稿内容会被清空')
+         :'· 服务端还留着上一次的会话（策划案 / 记忆库 / 已定稿章节）')
+      +'，之后无法再「续写」这一篇。\n'
+      +'· 已写好的 md / json 文件仍保存在 outputs_web 里，不会被删除。\n\n'
+      +'确定清空并开始新故事吗？',
+      ()=>startGenerate(mode,f),'清空并开始新故事');
     return;
   }
   startGenerate(mode,f);
