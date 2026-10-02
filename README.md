@@ -48,7 +48,7 @@ python main.py --prompt "测试" --chapters 2 --mock
 ## 开发与测试
 
 ```bash
-python -m pytest      # 156 项，全部离线，约 1.8 秒
+python -m pytest      # 167 项，全部离线，约 2.0 秒
 ```
 
 测试不联网、不烧 token：`MockLLM` 能跑通整条流水线，JSON 修复链与规则层检测都是纯字符串处理。
@@ -100,12 +100,15 @@ python -m pytest      # 156 项，全部离线，约 1.8 秒
 
 ```
 START ─(无策划案)→ planner ─┐
-      └(已有策划案)─────────┴→ writer ─┬→ reviewer_ooc   ─┐
-                                      ├→ reviewer_logic ─┼→ merge_reviews
-                                      └→ reviewer_pacing ─┘        │
-                                                                   ├─(fail 且未超轮)→ bump_round → writer
-                                                                   └─(pass 或超轮)──→ polisher → memory_settler → END
+      └(已有策划案)─────────┴→ chapter_planner → writer ─┬→ reviewer_ooc   ─┐
+                                                         ├→ reviewer_logic ─┼→ merge_reviews
+                                                         └→ reviewer_pacing ─┘        │
+                                                                                      ├─(fail 且未超轮)→ bump_round → writer
+                                                                                      └─(pass 或超轮)──→ polisher → memory_settler → END
 ```
+
+> `chapter_planner` 只在「本章不在策划案范围内」时才动手（典型场景：续写超出了原案章数），
+> 否则是空操作、不产生任何模型调用。重写循环（`bump_round → writer`）刻意绕开它。
 
 > 三路校对并行写**各自独立的 state key**（`review_comments_ooc` / `_logic` / `_pacing`），
 > 避免并行覆盖，最后由 `merge_reviews` 汇合判 verdict。
@@ -113,6 +116,7 @@ START ─(无策划案)→ planner ─┐
 | Agent | 职责 | 输出 |
 |---|---|---|
 | 策划 Planner | 需求 → 梗概/人物卡/分章大纲/转折点 + **每章场景节拍** | 严格 JSON |
+| 补纲 ChapterExtender | 本章超出策划案章数时，补一份分章大纲（标题/梗概/转折/节拍） | 严格 JSON |
 | 撰稿 Writer | 按大纲与节拍写正文，收到反馈定向重写 | 正文 |
 | 校对 `reviewer_ooc` | 只看人物一致性（性格/动机/禁忌） | JSON 清单 |
 | 校对 `reviewer_logic` | 只看时间线、设定一致性、剧情逻辑 | JSON 清单 |
@@ -198,7 +202,7 @@ story-agents/
 ├── web/
 │   ├── server.py      # FastAPI + SSE 进度推送 + 会话落盘/恢复
 │   └── static/index.html  # 表单页（人物卡动态增删、本机记忆）
-├── tests/             # pytest 测试集（离线，156 项，约 1.8 秒）
+├── tests/             # pytest 测试集（离线，167 项，约 2.0 秒）
 ├── docs/
 │   ├── 优化建议-对比同类项目.md   # 横向调研：能力矩阵 + P0–P3 清单
 │   └── images/        # README 截图
@@ -268,6 +272,24 @@ story-agents/
    命中则保留账本里的原名（避免名字漂移）；结算请求里附上当前人物名单，
    要求 `character_updates` 的 name 从名单中取——从源头少犯，而不是只靠事后收拾。
 
+**第二次实跑暴露的两个问题**（2026-10-02 第 4 章续写，同一产物目录）——**均已修复**：
+
+1. **续写超出策划案章数 → 本章没标题、没大纲** → 已补节点 `chapter_planner`。
+   原症状：需求写着"共3章"，写完第 3 章又续写第 4 章，而 `outline.chapters` 只有 3 条，
+   `_chapter_plan()` 匹配不到就走兜底分支，第 4 章落盘标题成了 `# 第4章`，
+   正文也没有分章梗概，全靠"上一章全文 + 核心冲突"自由发挥。
+   现在：入口先过 `chapter_planner`，发现本章不在策划案内时，用「策划案 + 已定稿章节标题
+   + 上一章结尾」补一份大纲写回 `outline.chapters` 并推 notice 告知；
+   补写失败则退回原兜底，但**必须告警**——不再无声降级。
+   之所以不塞进 `_chapter_plan()`：那个函数每章要被调用 7 次（撰稿 1 + 三路校对 3 +
+   汇合 1 + 润色 1 + 结算 1），在里面发 LLM 请求会把同一章规划出好几份不同的大纲。
+2. **改完代码不重启 = 一直在测旧代码** → `start.bat` 已加醒目提示。
+   原症状：`start.bat` 检测到 8765 被占用时**只打开浏览器然后退出**，而它启动的
+   uvicorn 不带 `--reload`；于是"改完代码再跑一遍"其实是在旧进程上又跑了一遍。
+   本次第 4 章就是这样：产物 `memory.json` 里连 `items` 键都没有、橘猫仍是 3 条并存
+   ——上面第 1 条与下面第 3 条修复根本没被执行到。
+   **排查手法**：先看产物 schema（有没有新字段）比看运行日志有用得多。
+
 **顺带修掉的检索退化**：`memory_index` 原先会把「第」「章」这类单字虚词当关键词提交，
 可它们几乎出现在每条摘要里，一命中就是一整片，bm25 区分度归零。
 实测症状：查「第16章 …」时 8 条命中全是第 1–8 章——等于把"按相关度检索"
@@ -279,8 +301,9 @@ story-agents/
 2. **交互**：无中途人工干预（人工确认/改稿后再续），当前是「一键跑完」
 3. **多书并行**：`config` 为进程级单例，网页端同一时间只能写一本（已加锁）
 4. **人物仍是提示词级约束**（人设卡 + 禁忌 + 快照），非独立 agent
-5. **人物禁忌压不住**：三章连续被三路校对报同一件事（内心独白过多 vs「惜字如金」人设），
-   第3章已升级为 critical。撰稿提示词对角色禁忌的强调力度需要加强
+5. **人物禁忌压不住**：连续四章被三路校对报同一件事（内心独白过多 vs「惜字如金」人设），
+   第3章已升级为 critical。撰稿提示词对角色禁忌的强调力度需要加强。
+   （第 4 章那次跑在旧代码上，但角色禁忌这一段提示词前后未改，结论仍成立。）
 
 ## 许可与致谢
 
