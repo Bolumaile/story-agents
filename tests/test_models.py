@@ -180,3 +180,67 @@ def test_delta_empty_is_all_defaults():
 def test_dump_returns_plain_dicts():
     out = models.dump(models.parse_comments([{"issue": "i"}]))
     assert isinstance(out[0], dict) and out[0]["issue"] == "i"
+
+
+# ── 物资账本（首次真模型实跑暴露的第 1 号缺口）────────────────
+def test_item_status_accepts_chinese_aliases():
+    m = models.parse_memory({"items": [{"name": "饼干", "status": "已用完"},
+                                       {"name": "刀", "status": "被抢"}]})
+    assert [i.status for i in m.items] == ["consumed", "lost"]
+
+
+def test_illegal_item_status_falls_back_to_available():
+    """账本条目必须有确定状态；模型乱写时收敛成 available 并告警。"""
+    notices = []
+    llm.set_notice_cb(lambda level, msg: notices.append(msg))
+    m = models.parse_memory({"items": [{"name": "x", "status": "不知道什么状态"}]})
+    assert m.items[0].status == "available"
+    assert any("不是合法值" in x for x in notices)
+
+
+def test_item_change_accepts_alternate_name_keys():
+    """模型常把物品名写在 item / 物品 上，不能因此丢掉整条变动。"""
+    d = models.parse_memory_delta({"item_changes": [{"item": "罐头", "qty": "半罐"}]})
+    assert d.item_changes[0].name == "罐头"
+
+
+def test_blank_item_change_status_means_unchanged():
+    """空状态 = 「状态没变」，必须与 available 区分开。
+
+    混起来会让已经吃完的东西在下一章被结算复活——这正是账本要防的事。
+    """
+    d = models.parse_memory_delta({"item_changes": [{"name": "罐头", "qty": "半罐"}]})
+    assert d.item_changes[0].status is None
+
+
+def test_item_change_tolerates_plain_string_entry():
+    d = models.parse_memory_delta({"item_changes": ["手电筒"]})
+    assert d.item_changes[0].name == "手电筒"
+
+
+def test_old_memory_without_items_still_loads():
+    """老存档没有 items 键：加载成空账本，而不是报错或塞进垃圾。"""
+    m = models.parse_memory({"chapter_summaries": [{"chapter": 1, "summary": "s"}]})
+    assert m.items == []
+
+
+def test_outline_initial_items_are_parsed():
+    o = models.parse_outline({"initial_items": [{"name": "水", "qty": "1 瓶"}, "干粮"]})
+    assert [i.name for i in o.initial_items] == ["水", "干粮"]
+    assert o.initial_items[0].status == "available"
+
+
+# ── 角色名归一（人物快照防裂条）──────────────────────────────
+def test_canon_name_strips_bracket_note_and_space():
+    assert models.canon_name("橘猫（流浪猫）") == models.canon_name("橘猫")
+    assert models.canon_name("橘猫 ") == models.canon_name("橘猫")
+
+
+def test_canon_name_keeps_genuinely_different_names_apart():
+    """不能把「林岸」和「林岸的父亲」判成同一个人——所以不做子串匹配。"""
+    assert models.canon_name("林岸") != models.canon_name("林岸的父亲")
+
+
+def test_canon_name_handles_empty_input():
+    assert models.canon_name(None) == ""
+    assert models.canon_name("   ") == ""

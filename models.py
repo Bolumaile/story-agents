@@ -3,6 +3,13 @@
 对应优化建议第 6 条（伏笔状态机 + schema 校验）与第 9 条（强类型约束）。
 两处共用一套模型，避免各写一份校验逻辑。
 
+后续补充（首次真模型实跑暴露的问题）：
+- `Item` / `ItemChange`：物资道具账本。原先记忆库只有 伏笔/人物/摘要 三个键，
+  物资不在内，撰稿人每章凭摘要自编，导致"吃掉的压缩饼干又出现""凭空多出黄桃罐头"，
+  3 章烧掉 3 轮重写。现在物资进账本，撰稿端只能用账本内的东西。
+- `canon_name()`：角色名归一。原先按 name 精确匹配合并人物快照，
+  模型换个称呼（「橘猫（流浪猫）」/「橘猫」/「猫」）就新建一条，同一角色裂成多条。
+
 设计取舍（与本项目一贯的 fail-open 哲学一致）
 ------------------------------------------------
 1. **缺字段落默认值，不抛异常。** 模型少写一个键，不该让已经写好的整章作废
@@ -13,6 +20,7 @@
    **收敛到默认态 + 提示用户**，坏值不会继续传播，数据也不丢。
 3. 所有模型都能 `model_dump()` 成纯 dict，可直接塞进 State 和 JSON 文件。
 """
+import re
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
@@ -151,6 +159,62 @@ def _norm_severity(v: Any) -> str:
     return "critical" if _s(v).strip().lower().startswith("crit") else "minor"
 
 
+# ── 物资状态归一 ─────────────────────────────────────────────────
+
+ITEM_STATUS = Literal["available", "consumed", "lost"]
+
+_ITEM_STATUS_ALIASES = {
+    "available": "available", "usable": "available", "held": "available",
+    "可用": "available", "持有": "available", "在身": "available", "完好": "available",
+    "consumed": "consumed", "used": "consumed", "used_up": "consumed", "empty": "consumed",
+    "耗尽": "consumed", "已耗尽": "consumed", "用完": "consumed", "已用完": "consumed",
+    "吃掉": "consumed", "吃光": "consumed", "消耗": "consumed", "空": "consumed",
+    "lost": "lost", "missing": "lost", "gone": "lost",
+    "丢失": "lost", "遗失": "lost", "被抢": "lost", "不在": "lost",
+}
+
+
+def _norm_item_status(v: Any) -> Optional[str]:
+    """物资状态归一。空值返回 None = 「本次不修改状态」。
+
+    注意 "空" 归到 consumed（"罐子空了"），与"未提供"（None）是两回事：
+    前者是明确的消耗动作，后者是模型没提这件事——混起来会让已吃完的东西复活。
+    """
+    raw = _s(v).strip()
+    if not raw:
+        return None
+    key = raw.lower()
+    if key in _ITEM_STATUS_ALIASES:
+        return _ITEM_STATUS_ALIASES[key]
+    if raw in _ITEM_STATUS_ALIASES:
+        return _ITEM_STATUS_ALIASES[raw]
+    _warn(f"item.status.{key}",
+          f"记忆结算给出的物资状态「{raw}」不是合法值"
+          f"（只接受 available / consumed / lost），本次不改动该物资状态。")
+    return None
+
+
+# ── 角色名归一（人物快照防裂条）──────────────────────────────────
+
+_BRACKET_RE = re.compile(r"[（(【\[][^）)】\]]*[）)】\]]")
+_NAME_NOISE_RE = re.compile(r"[\s·・.,，。、;；:：!！?？\"'“”‘’\-—_]+")
+
+
+def canon_name(name: Any) -> str:
+    """把角色名归一成可比较的键：去括号备注 → 去空白标点 → 转小写。
+
+    例：「橘猫（流浪猫）」/「橘猫 」/「橘猫」→ 都是 "橘猫"。
+    不做子串包含匹配（「林岸」⊂「林岸的父亲」会误合并），
+    那类漂移靠结算提示词「从给定名单中选名字」从源头抑制。
+    """
+    s = _s(name).strip()
+    if not s:
+        return ""
+    s = _BRACKET_RE.sub("", s)
+    s = _NAME_NOISE_RE.sub("", s)
+    return s.lower()
+
+
 # ── 模型 ─────────────────────────────────────────────────────────
 
 class SceneBeat(BaseModel):
@@ -194,6 +258,64 @@ class Character(BaseModel):
     potential_conflicts: Str = ""
 
 
+# ── 物资道具账本 ─────────────────────────────────────────────────
+# 首次真模型实跑（2026-10-02）暴露的头号问题：记忆库只有 伏笔 / 人物 / 摘要 三个键，
+# 物资不在内，撰稿人每章凭摘要自编——"吃完的压缩饼干又出现""凭空多出黄桃罐头"
+# "凭空多出牛肉干"，3 章里 2 章因这个被打回，烧掉 3 轮重写。
+
+_ITEM_NAME_KEYS = ("item", "物品", "道具", "物件", "名称", "thing")
+
+
+class Item(BaseModel):
+    """账本里的一件物资（权威记录；撰稿端只能用账本内的东西）。
+
+    为什么单独立账本而不是塞进人物快照：人物快照写的是"他是谁、他在想什么"，
+    物资写的是"他手上还剩什么"。混在一起模型就会用写人物状态的笔法写物资，
+    余量、数量这类关键信息全丢——而那恰恰是跨章比对要用的。
+    """
+    name: Str = ""
+    qty: Str = ""                    # 当前存量描述（"半罐""1 瓶""约两天口粮"）
+    status: ITEM_STATUS = "available"
+    note: Str = ""                   # 来源 / 存放位置 / 其他说明
+    chapter: Int = 0                 # 首次登记章节
+    last_changed_chapter: Int = 0    # 最后一次变动章节
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        # 账本内的条目必须有确定状态；空值/非法值一律当 available（fail-open）
+        return _norm_item_status(v) or "available"
+
+
+class ItemChange(BaseModel):
+    """记忆结算给出的单条物资变动。留空的字段 = 本次不改动该项。
+
+    与 Item 分开的原因：
+    - "这个罐头还剩半罐"（改存量）和"这个罐头吃完了"（改状态）是两件事，
+      合成一个模型就会出现"只改存量时状态被默认值覆盖成 available"的复活 bug。
+    - 新物品也走这里：name 不在账本里 → 新建条目。
+    """
+    name: Str = ""
+    qty: Str = ""                          # 变更后的存量描述；空 = 不改动
+    status: Optional[ITEM_STATUS] = None   # 变更后的状态；None = 不改动
+    note: Str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_name(cls, data):
+        """容忍模型把物品名写在别的键上（item / 物品 / 道具…）。"""
+        if isinstance(data, dict) and not _s(data.get("name")).strip():
+            for k in _ITEM_NAME_KEYS:
+                if _s(data.get(k)).strip():
+                    return {**data, "name": data.get(k)}
+        return data
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _norm_item_status(v)
+
+
 class Outline(BaseModel):
     title: Str = ""
     theme: Str = ""
@@ -201,6 +323,11 @@ class Outline(BaseModel):
     chapters: List[Chapter] = Field(default_factory=list)
     core_conflict: Str = ""
     ending_direction: Str = ""
+    # 开局物资清单：给第 1 章的撰稿人一个起点。
+    # 为什么放策划案里：实测最伤的是"第 1 章背包清单自身就矛盾（列了 4 项又摸出罐头），
+    # 而第 1 章 0 轮重写通过 → 内伤被当正典固化，后续每章都要重新审一遍"。
+    # 让策划先把清单立住，撰稿端从第一章起就有账本可比对。
+    initial_items: List[Item] = Field(default_factory=list)
 
     @field_validator("characters", mode="before")
     @classmethod
@@ -211,6 +338,11 @@ class Outline(BaseModel):
     @classmethod
     def _coerce_chapters(cls, v):
         return _dict_items(v, "title")
+
+    @field_validator("initial_items", mode="before")
+    @classmethod
+    def _coerce_items(cls, v):
+        return _dict_items(v, "name")
 
     @model_validator(mode="after")
     def _fill_chapter_index(self):
@@ -288,8 +420,10 @@ class Memory(BaseModel):
     chapter_summaries: List[ChapterSummary] = Field(default_factory=list)
     foreshadow_pool: List[Foreshadow] = Field(default_factory=list)
     character_states: List[CharacterState] = Field(default_factory=list)
+    items: List[Item] = Field(default_factory=list)     # 物资道具账本
 
-    @field_validator("chapter_summaries", "foreshadow_pool", "character_states", mode="before")
+    @field_validator("chapter_summaries", "foreshadow_pool",
+                     "character_states", "items", mode="before")
     @classmethod
     def _coerce_lists(cls, v):
         return _as_list(v)
@@ -302,6 +436,7 @@ class MemoryDelta(BaseModel):
     resolved_foreshadows: List[str] = Field(default_factory=list)
     advanced_foreshadows: List[str] = Field(default_factory=list)
     character_updates: List[CharacterState] = Field(default_factory=list)
+    item_changes: List[ItemChange] = Field(default_factory=list)
 
     @field_validator("new_foreshadows", mode="before")
     @classmethod
@@ -311,6 +446,11 @@ class MemoryDelta(BaseModel):
     @field_validator("character_updates", mode="before")
     @classmethod
     def _coerce_updates(cls, v):
+        return _dict_items(v, "name")
+
+    @field_validator("item_changes", mode="before")
+    @classmethod
+    def _coerce_item_changes(cls, v):
         return _dict_items(v, "name")
 
     @field_validator("resolved_foreshadows", "advanced_foreshadows", mode="before")
