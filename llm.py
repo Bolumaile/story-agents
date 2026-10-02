@@ -341,6 +341,12 @@ class MockLLM:
                               "notes": ""}],
                 "core_conflict": "真相与安全的取舍",
                 "ending_direction": "开放式：堤上留下脚印，人未归",
+                # 开局物资清单：让第 1 章的撰稿人一开始就有一本账可比对。
+                # 故意给两样"会被消耗"的东西，便于离线验证账本更新与"已耗尽不可再用"。
+                "initial_items": [
+                    {"name": "半瓶矿泉水", "qty": "半瓶", "note": "主舱侧袋"},
+                    {"name": "手电筒", "qty": "1 支", "note": "电量不明"},
+                ],
             }, ensure_ascii=False)
         # 校对拆成三路并行后，Mock 也要分流（判断顺序：具体的在前）。
         # 只让 OOC 这一路在第一轮打回——三路同时 fail 会让重写轮数行为难以验证。
@@ -381,6 +387,18 @@ class MockLLM:
             # 「埋太久没推进」的超期巡检会不会真的报警。
             m = re.search(r"第(\d+)章", user)
             idx = int(m.group(1)) if m else 1
+            # 人物名在第 2 章故意带括号备注，用来离线验证「角色名归一后不裂条」
+            who = "林岸（主角）" if idx == 2 else "林岸"
+            # 物资变动按章给：第 1 章减量 → 第 2 章耗尽 + 新捡一件 → 第 3 章起无变动。
+            # 三条路径（改存量 / 标耗尽 / 新增）都能在离线测试里被覆盖到。
+            if idx == 1:
+                items = [{"name": "半瓶矿泉水", "qty": "只剩两口"},
+                         {"name": "手电筒", "qty": "1 支"}]
+            elif idx == 2:
+                items = [{"name": "半瓶矿泉水", "status": "consumed"},
+                         {"name": "塑料布", "qty": "1 张", "note": "第2章在路上捡到"}]
+            else:
+                items = []
             return json.dumps({
                 "summary": f"第{idx}章：林岸收到半页笔记，逐步接近父亲失踪的真相。",
                 "new_foreshadows": [
@@ -388,7 +406,8 @@ class MockLLM:
                 "resolved_foreshadows": [],
                 "advanced_foreshadows": [],
                 "character_updates": [
-                    {"name": "林岸", "state": "确认父亲失踪另有隐情，进入戒备状态"}],
+                    {"name": who, "state": "确认父亲失踪另有隐情，进入戒备状态"}],
+                "item_changes": items,
             }, ensure_ascii=False)
         if "ReaderAgent" in system:
             return ("读下来像在雨夜隔着一层玻璃看别人生活——安静，但一直有东西在轻轻敲。"

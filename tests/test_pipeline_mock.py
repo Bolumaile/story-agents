@@ -340,3 +340,115 @@ def test_style_report_is_produced(mock_mode):
     rep = state.get("style_report") or {}
     assert rep, "没有产出风格体检报告"
     assert rep["stats"]["chars"] > 0
+
+
+# ── 物资账本（首次真模型实跑暴露的第 1 号缺口）────────────────
+def test_planner_seeds_inventory_from_outline(mock_mode):
+    """策划给的 initial_items 要变成账本起点。
+
+    否则第 1 章的撰稿人手上没有账可对——实测正是这一章"自己列了 4 样东西、
+    紧接着又摸出别的"，而它 0 轮重写通过，内伤被当正典固化。
+    """
+    app = graph_mod.build_graph()
+    state = _run_chapters(app, initial_state(), 1)
+    names = [i["name"] for i in state["memory"]["items"]]
+    assert "半瓶矿泉水" in names and "手电筒" in names
+
+
+def test_inventory_tracks_qty_then_consumption(mock_mode):
+    """一条物资的完整生命周期：建账 → 改存量 → 标耗尽。"""
+    app = graph_mod.build_graph()
+    state = _run_chapters(app, initial_state(), 2)
+    water = next(i for i in state["memory"]["items"] if i["name"] == "半瓶矿泉水")
+    assert water["qty"] == "只剩两口", "第 1 章的存量变更没生效"
+    assert water["status"] == "consumed", "第 2 章的耗尽没生效"
+    assert water["last_changed_chapter"] == 2
+
+
+def test_inventory_gains_new_item_with_its_chapter(mock_mode):
+    """本章新获得的物资要新建条目，并记下是第几章来的。"""
+    app = graph_mod.build_graph()
+    state = _run_chapters(app, initial_state(), 2)
+    cloth = next(i for i in state["memory"]["items"] if i["name"] == "塑料布")
+    assert cloth["chapter"] == 2 and cloth["status"] == "available"
+
+
+def test_inventory_reaches_writer_prompt_with_unusable_list(mock_mode, monkeypatch):
+    """撰稿人必须看到账本——尤其是「这些已经不能再用」。"""
+    seen = {}
+    real_chat = llm.chat
+
+    def spy(system, user, *a, **kw):
+        if "Writer" in system:
+            seen["prompt"] = user
+        return real_chat(system, user, *a, **kw)
+
+    monkeypatch.setattr(llm, "chat", spy)
+    state = initial_state()
+    state["outline"] = {"title": "T", "characters": [],
+                        "chapters": [{"index": 1, "title": "甲"}]}
+    state["memory"] = {"chapter_summaries": [], "foreshadow_pool": [],
+                       "character_states": [],
+                       "items": [{"name": "压缩饼干", "status": "consumed", "chapter": 1}]}
+    nodes.writer_node(state)
+    assert "物资账本" in seen["prompt"], "撰稿请求里没有物资账本"
+    assert "压缩饼干[已耗尽]" in seen["prompt"], "没有把「已耗尽」明确写给撰稿人"
+
+
+def test_consumed_item_is_not_revived_by_qty_only_change():
+    """只改存量的结算条目不得把状态重置回 available。
+
+    这是账本最容易出的错，也是它存在的意义：一旦复活，
+    「昨天就吃完的压缩饼干今天又摸出来半块」会原样重演。
+    """
+    out = _settler_with(
+        {"summary": "s", "item_changes": [{"name": "压缩饼干", "qty": "半块"}]},
+        {"chapter_summaries": [], "character_states": [], "foreshadow_pool": [],
+         "items": [{"name": "压缩饼干", "qty": "", "status": "consumed", "chapter": 1}]})
+    it = out["memory"]["items"][0]
+    assert it["status"] == "consumed"
+    assert it["qty"] == "半块"
+
+
+def test_item_name_is_matched_after_normalization():
+    """「折叠刀（生锈）」要并进已有的「折叠刀」，不能变成第二把刀。"""
+    out = _settler_with(
+        {"summary": "s", "item_changes": [{"name": "折叠刀（生锈）", "qty": "1 把"}]},
+        {"chapter_summaries": [], "character_states": [], "foreshadow_pool": [],
+         "items": [{"name": "折叠刀", "qty": "", "status": "available", "chapter": 1}]})
+    items = out["memory"]["items"]
+    assert len(items) == 1, f"同一件东西被拆成两条：{[i['name'] for i in items]}"
+    assert items[0]["name"] == "折叠刀", "命中已有条目时应保留账本里的原名"
+
+
+# ── 人物快照：角色名归一 ─────────────────────────────────────
+def test_character_names_do_not_split_on_alias(mock_mode):
+    """Mock 第 2 章把人物写成「林岸（主角）」——不能因此裂成两条快照。
+
+    实测真实模型把同一只猫写成「橘猫（流浪猫）」「橘猫」「猫」三条并存。
+    """
+    app = graph_mod.build_graph()
+    state = _run_chapters(app, initial_state(), 2)
+    names = [c["name"] for c in state["memory"]["character_states"]]
+    assert names == ["林岸"], f"人物快照裂条：{names}"
+
+
+def test_settler_prompt_lists_current_characters_and_items(monkeypatch):
+    """结算请求要带上人物名单与账本——模型没有可对齐的依据就会自由发挥。"""
+    seen = {}
+
+    def fake_chat_json(system, user, *a, **kw):
+        seen["msg"] = user
+        return {"summary": "s"}
+
+    monkeypatch.setattr(llm, "chat_json", fake_chat_json)
+    nodes.memory_settler_node({
+        "chapter_index": 3,
+        "final_chapter": "正文",
+        "outline": {"chapters": [{"index": 3, "title": "第3章"}]},
+        "memory": {"chapter_summaries": [], "foreshadow_pool": [],
+                   "character_states": [{"name": "林岸", "state": "戒备"}],
+                   "items": [{"name": "手电筒", "qty": "1 支", "status": "available"}]},
+    })
+    assert "当前人物名单" in seen["msg"] and "林岸" in seen["msg"]
+    assert "物资账本" in seen["msg"] and "手电筒" in seen["msg"]

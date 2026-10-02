@@ -30,11 +30,24 @@ def _retrieval_query(state: StoryState, plan: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _rank_open_foreshadows(open_pool, idx: int) -> list:
+    """必带项里未回收伏笔的排序：deadline 临近的优先，其次最久没推进的。
+
+    截断必然有代价，所以把「最可能马上要兑现」和「最容易被遗忘」的排在最前面。
+    这里是纯 dict（还没过 Pydantic），字段可能缺失，一律 get + 兜底。
+    """
+    def key(f):
+        dl = f.get("deadline_chapter")
+        last = f.get("last_advanced_chapter") or f.get("chapter") or 0
+        return (0 if dl else 1, dl or 9999, -(idx - last), f.get("chapter") or 0)
+    return sorted(open_pool, key=key)
+
+
 def _memory_context(state: StoryState, plan: dict = None) -> str:
-    """故事记忆：必带项（未回收伏笔 + 人物快照）+ 检索项（相关前情摘要）。
+    """故事记忆：必带项（未回收伏笔 + 人物快照 + 物资账本）+ 检索项（相关前情摘要）。
 
     为什么分成两类：
-    - 未回收伏笔和人物当前快照一旦漏掉，长篇立刻出现设定崩坏 —— 必带，不参与淘汰。
+    - 未回收伏笔、人物当前快照、物资账本一旦漏掉，长篇立刻出现设定崩坏 —— 必带，不参与淘汰。
     - 前情摘要会随章节数线性膨胀，正是要按相关度检索的那部分。
     """
     plan = plan or {}
@@ -42,20 +55,33 @@ def _memory_context(state: StoryState, plan: dict = None) -> str:
     summaries = [s for s in (mem.get("chapter_summaries") or []) if isinstance(s, dict)]
     pool = [f for f in (mem.get("foreshadow_pool") or []) if isinstance(f, dict)]
     chars = [c for c in (mem.get("character_states") or []) if isinstance(c, dict)]
-    if not summaries and not pool and not chars:
+    items = [i for i in (mem.get("items") or []) if isinstance(i, dict)]
+    if not summaries and not pool and not chars and not items:
         return "（这是第一章，暂无故事记忆）"
 
+    idx = plan.get("index") or state.get("chapter_index") or 1
     lines = []
 
-    # 必带项 1：未回收伏笔
+    # 必带项 1：未回收伏笔（带条数上限）
     open_pool = [f for f in pool if (f.get("status") or "open") != "resolved"]
     if open_pool:
-        lines.append("【伏笔池（未回收，必带）】")
-        for f in open_pool:
+        ranked = _rank_open_foreshadows(open_pool, idx)
+        limit = max(1, config.MEMORY_MUST_HAVE_MAX)
+        shown, hidden = ranked[:limit], ranked[limit:]
+        lines.append(f"【伏笔池（未回收，必带，共 {len(open_pool)} 条）】")
+        for f in shown:
             last = f.get("last_advanced_chapter") or f.get("chapter") or 0
             extra = f"，最后推进于第{last}章" if last and last != f.get("chapter") else ""
+            dl_n = f.get("deadline_chapter")
+            dl = f"，期望第{dl_n}章前回收" if dl_n else ""
             lines.append(f"- [{f.get('status')}] {f.get('id')}：{f.get('desc')}"
-                         f"（埋于第{f.get('chapter')}章{extra}）")
+                         f"（埋于第{f.get('chapter')}章{extra}{dl}）")
+        if hidden:
+            # 截断是必须的（实测必带项按约 6 条/章线性增长），但不能让被截掉的伏笔
+            # 就此消失：至少给出 id，这样本章若涉及它们，记忆结算仍能推进/回收。
+            ids = "、".join(str(f.get("id") or "?") for f in hidden)
+            lines.append(f"- （另有 {len(hidden)} 条较早伏笔未列描述，id：{ids}"
+                         f"——本章若涉及，仍须在记忆结算里推进或回收）")
     resolved_n = len(pool) - len(open_pool)
     if resolved_n:
         lines.append(f"（另有 {resolved_n} 条伏笔已回收，需要时会被检索出来）")
@@ -66,8 +92,31 @@ def _memory_context(state: StoryState, plan: dict = None) -> str:
         for cs in chars:
             lines.append(f"- {cs.get('name')}：{cs.get('state')}")
 
+    # 必带项 3：物资账本
+    # 为什么是"必带"而不是"检索"：物资矛盾是长篇里最容易犯、读者最容易发现的硬伤，
+    # 而且它天然是个硬约束（有/没有），不该由检索相关度决定带不带。
+    #
+    # 展示上分两组：可用的逐条列（要带存量与备注），不可用的压成一行只报名字——
+    # 已耗尽的东西不需要排版美感，只需要"别再写出来"这个约束，压一行能省不少字。
+    if items:
+        avail = [i for i in items if (i.get("status") or "available") == "available"]
+        gone = [i for i in items if (i.get("status") or "available") != "available"]
+        lines.append("【物资账本（必带）——只能用清单里的东西】")
+        for it in avail:
+            qty = (it.get("qty") or "").strip()
+            seg = f"- {it.get('name')}" + (f"（存量：{qty}）" if qty else "")
+            note = (it.get("note") or "").strip()
+            if note:
+                seg += f"｜{note}"
+            lines.append(seg)
+        if gone:
+            names = "、".join(
+                f"{it.get('name')}"
+                f"[{'已耗尽' if it.get('status') == 'consumed' else '已丢失'}]"
+                for it in gone)
+            lines.append(f"- （以下已不可用，本章绝不能再次出现：{names}）")
+
     # 检索项：相关前情摘要
-    idx = plan.get("index") or state.get("chapter_index") or 1
     earlier = [s for s in summaries if (s.get("chapter") or 0) < idx]
     if earlier:
         picked = []
@@ -186,6 +235,15 @@ def planner_node(state: StoryState) -> dict:
                 state=(f"性格：{c.personality}；动机：{c.motivation}"
                        + (f"；禁忌：{c.taboo}" if c.taboo else "")))
             for c in outline.characters if c.name
+        ]
+    # 开局物资清单也先入库：这样第 1 章的撰稿人拿到 prompt 时账本就已经在了，
+    # 从源头掐掉「第 1 章自己列了 4 样东西、紧接着又摸出别的东西」这类内伤
+    # （实测第 1 章 0 轮重写通过，这份矛盾被当正典固化，之后每章都要重新审一遍）。
+    if not memory.items:
+        memory.items = [
+            models.Item(name=it.name.strip(), qty=it.qty.strip(), note=it.note.strip(),
+                        status="available", chapter=1, last_changed_chapter=1)
+            for it in outline.initial_items if it.name.strip()
         ]
     return {"outline": outline.model_dump(), "memory": memory.model_dump()}
 
@@ -392,7 +450,15 @@ def polisher_node(state: StoryState) -> dict:
 
 # ── 5. 记忆结算员（MemorySettler，润色定稿后运行）──────────────
 def _empty_memory() -> dict:
-    return {"chapter_summaries": [], "foreshadow_pool": [], "character_states": []}
+    return {"chapter_summaries": [], "foreshadow_pool": [],
+            "character_states": [], "items": []}
+
+
+def _item_line(it) -> str:
+    """把账本条目渲染成一行，给记忆结算员看（含存量与状态标注）。"""
+    qty = f"（存量：{it.qty}）" if it.qty and it.status == "available" else ""
+    tag = {"consumed": "【已耗尽】", "lost": "【已丢失】"}.get(it.status, "")
+    return f"- {it.name}{qty}{tag}"
 
 
 def _stale_foreshadows(pool, idx: int):
@@ -413,9 +479,17 @@ def memory_settler_node(state: StoryState) -> dict:
     mem = models.parse_memory(state.get("memory") or {})
     pool_txt = "\n".join(
         f"- {f.id}：{f.desc}" for f in mem.foreshadow_pool) or "（空）"
+    # 把人物名单与物资账本一并给模型：
+    # - 名单是治「同一角色裂成多条」的源头约束（实测「橘猫」「橘猫（流浪猫）」「猫」并存）；
+    # - 账本是让结算员"按账对账"，而不是每章重新自由发挥一遍物资。
+    names_txt = "、".join(cs.name for cs in mem.character_states if cs.name) or "（暂无）"
+    items_txt = "\n".join(_item_line(it) for it in mem.items) \
+        or "（空——本章正文里出现的物资将作为账本起点）"
     user_msg = (
         f"【本章信息】第{idx}章《{plan['title']}》\n"
         f"【当前伏笔池（resolved / advanced 的 id 只能从中选）】\n{pool_txt}\n\n"
+        f"【当前人物名单（character_updates 的 name 只能从中选）】\n{names_txt}\n\n"
+        f"【当前物资账本（item_changes 的 name 优先取账本原名）】\n{items_txt}\n\n"
         f"【本章定稿正文】\n{state['final_chapter']}\n\n"
         f"请输出本章记忆结算 JSON。")
     try:
@@ -469,13 +543,45 @@ def memory_settler_node(state: StoryState) -> dict:
     for cu in delta.character_updates:
         if not cu.name:
             continue
+        key = models.canon_name(cu.name)
         for cs in mem.character_states:
-            if cs.name == cu.name:
+            # 先精确、再按归一后的名字匹配（「橘猫（流浪猫）」==「橘猫」）。
+            # 命中后**保留账本里已有的 name 不动**——名字漂移比合并本身更麻烦：
+            # 稳定的名字才能让「人物卡」与「记忆库」始终对得上号。
+            if cs.name == cu.name or (key and models.canon_name(cs.name) == key):
                 cs.state = cu.state
                 break
         else:
             mem.character_states.append(
                 models.CharacterState(name=cu.name, state=cu.state))
+
+    # ── 物资账本：新增 or 更新，名字同样走归一匹配 ──
+    by_key = {models.canon_name(it.name): it for it in mem.items if it.name.strip()}
+    for ch in delta.item_changes:
+        name = ch.name.strip()
+        if not name:
+            continue
+        key = models.canon_name(name)
+        hit = by_key.get(key) if key else None
+        if hit is None:
+            # 本章首次出现的物资（含捡到、别人给的、买来的）。
+            # 状态缺省按可用处理——它此刻确实在手上。
+            it = models.Item(name=name, qty=ch.qty, note=ch.note,
+                             status=ch.status or "available",
+                             chapter=idx, last_changed_chapter=idx)
+            mem.items.append(it)
+            by_key[key or name] = it
+            continue
+        # 已有物资：只覆盖模型明确给出的字段。
+        # 特别地，status 为空表示"状态没变"，绝不能当成 available 写回去
+        # ——那会让已经吃完的东西复活，正是这本账要防的事。
+        if ch.qty:
+            hit.qty = ch.qty
+        if ch.status:
+            hit.status = ch.status
+        if ch.note:
+            hit.note = ch.note
+        hit.last_changed_chapter = idx
 
     # ── 伏笔超期巡检：伏笔烂尾是长篇最伤读者的问题，这里主动兜住 ──
     stale = _stale_foreshadows(mem.foreshadow_pool, idx)

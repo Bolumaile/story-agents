@@ -31,7 +31,9 @@ class StoryState(TypedDict):
     meta: Dict[str, Any]          # {style_sample, word_count, foreshadow, cliffhanger, forbidden_list}
 
     # —— 故事记忆（每章定稿后由记忆结算员更新）——
-    memory: Dict[str, Any]        # {chapter_summaries, foreshadow_pool, character_states}
+    # {chapter_summaries, foreshadow_pool, character_states, items}
+    # items 是物资账本：撰稿端只能用账本内的物资，已耗尽/已丢失的不许再用。
+    memory: Dict[str, Any]
 
     # —— 累积记忆 ——
     final_chapters: List[Dict]    # 已定稿章节 [{"index", "title", "text"}]

@@ -238,3 +238,61 @@ def test_meta_sections_word_count_only_for_writer():
     st = {"meta": {"word_count": 3000}}
     assert "3000" in "\n".join(nodes._meta_sections(st, "writer"))
     assert "3000" not in "\n".join(nodes._meta_sections(st, "reviewer"))
+
+
+# ── ⑨ 必带项：物资账本与未回收伏笔的条数上限 ──────────────────
+def _mem_state(items=None, pool=None, idx=3):
+    return {
+        "chapter_index": idx,
+        "memory": {"chapter_summaries": [], "foreshadow_pool": pool or [],
+                   "character_states": [], "items": items or []},
+    }
+
+
+def test_memory_context_includes_inventory():
+    ctx = nodes._memory_context(_mem_state(items=[
+        {"name": "半瓶矿泉水", "qty": "半瓶", "status": "available", "note": "主舱侧袋"}]))
+    assert "物资账本" in ctx
+    assert "半瓶矿泉水" in ctx and "半瓶" in ctx and "主舱侧袋" in ctx
+
+
+def test_memory_context_marks_unusable_items_and_hides_their_qty():
+    ctx = nodes._memory_context(_mem_state(items=[
+        {"name": "压缩饼干", "qty": "半块", "status": "consumed"},
+        {"name": "折叠刀", "qty": "1 把", "status": "lost"}]))
+    assert "已不可用" in ctx
+    assert "压缩饼干[已耗尽]" in ctx and "折叠刀[已丢失]" in ctx
+    assert "1 把" not in ctx, "已丢失的物资不该再显示存量，那是误导"
+
+
+def test_memory_context_caps_open_foreshadows(monkeypatch):
+    """必带项必须有上界：实测 3 章能攒 18 条伏笔，按约 6 条/章线性涨下去。
+
+    截断但不能"消失"——被省略的至少留下 id，记忆结算仍要靠 id 推进/回收。
+    """
+    monkeypatch.setattr(config, "MEMORY_MUST_HAVE_MAX", 3)
+    pool = [{"id": f"F{i}", "desc": f"第{i}章悬念", "chapter": i, "status": "open",
+             "last_advanced_chapter": i} for i in range(1, 8)]
+    ctx = nodes._memory_context(_mem_state(pool=pool, idx=8))
+    assert "共 7 条" in ctx
+    assert "另有 4 条" in ctx and "F4" in ctx
+    assert ctx.count("- [open]") == 3
+
+
+def test_stalest_foreshadow_ranks_first():
+    """没有 deadline 时，最久没推进的排最前——它最容易被忘掉。"""
+    pool = [
+        {"id": "F1", "desc": "a", "chapter": 1, "status": "open", "last_advanced_chapter": 1},
+        {"id": "F2", "desc": "b", "chapter": 2, "status": "open", "last_advanced_chapter": 7},
+    ]
+    assert [f["id"] for f in nodes._rank_open_foreshadows(pool, idx=9)] == ["F1", "F2"]
+
+
+def test_foreshadow_with_deadline_outranks_staleness():
+    """有 deadline 的伏笔意味着"作者指定过它该在哪兑现"，优先于单纯的陈旧度。"""
+    pool = [
+        {"id": "F1", "desc": "a", "chapter": 1, "status": "open", "last_advanced_chapter": 1},
+        {"id": "F2", "desc": "b", "chapter": 2, "status": "open",
+         "last_advanced_chapter": 8, "deadline_chapter": 10},
+    ]
+    assert [f["id"] for f in nodes._rank_open_foreshadows(pool, idx=9)] == ["F2", "F1"]
