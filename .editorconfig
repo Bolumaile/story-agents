@@ -1,0 +1,52 @@
+# 编辑器统一配置（EditorConfig）
+# ─────────────────────────────────────────────────────────────
+# 与 .gitattributes 是「同一件事的两端」，两者必须口径一致：
+#   .gitattributes → 约束 Git 在「入库/检出」时怎么处理行尾
+#   .editorconfig  → 约束编辑器在「敲键盘/保存」时怎么处理行尾与空白
+# 少了这一份，行尾在写文件的那一刻就已经被编辑器写成别的样子，
+# 之后只能靠 .gitattributes 反复纠正（表现为工作区频繁出现假改动）。
+#
+# 注意：EditorConfig 只对「支持它的编辑器/插件」生效（VS Code 内置、
+# JetBrains 全系、Vim/Neovim、Sublime 等）。它管不了编辑器的
+# 「表格自动对齐 / Prettier 格式化」这类独立功能，那是各插件自己的开关。
+
+root = true
+
+# ── 默认：所有文件 ──
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# ── Python：4 空格（PEP 8）──
+[*.py]
+indent_size = 4
+
+# ── 前端 / 配置：2 空格 ──
+[*.{html,htm,css,js,mjs,json,yml,yaml}]
+indent_size = 2
+
+# ── Markdown：不裁行尾空白 ──
+# 故意的。Markdown 里「行尾两个空格」是硬换行的合法语法，
+# 裁掉会悄悄改变渲染结果。代价是编辑器若自己插入了行尾空格，
+# 这里不会帮你清掉——若你更在意干净、且从不使用硬换行，
+# 把下面一行改成 true 即可。
+[*.md]
+trim_trailing_whitespace = false
+
+# ── Windows 脚本：CRLF ──
+# 与 .gitattributes 中 *.bat/*.cmd 的 eol=crlf 对齐；
+# cmd.exe 对以 LF 结尾的批处理在 goto/label 场景有历史坑。
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# ── 二进制：别做任何文本处理 ──
+# 字体/图片本身不含行尾概念，这里显式排除，避免编辑器误转码。
+[*.{ttf,otf,woff,woff2,eot,png,jpg,jpeg,gif,ico,pdf,zip,gz}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
