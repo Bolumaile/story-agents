@@ -40,6 +40,11 @@ def build_initial_state(args) -> StoryState:
         chapter_draft="",
         review_comments=[],
         review_verdict="pass",
+        # 三路并行校对：每路各写各的 key
+        review_comments_ooc=[],
+        review_comments_logic=[],
+        review_comments_pacing=[],
+        style_report={},
         revision_round=0,
         final_chapter="",
         meta={},
@@ -68,6 +73,10 @@ def main():
     state = build_initial_state(args)
     app = graph_mod.build_graph()
 
+    # 把「可降级」的告警也打到控制台。伏笔超期提醒、去 AI 味体检、校对降级
+    # 这些在网页端走 SSE 推给前端；命令行下不接出来就完全看不到了。
+    llm.set_notice_cb(lambda level, msg: print(f"  [{level}] {msg}"))
+
     # ── 逐章流水线：入口路由保证策划只在第一章前跑一次 ──
     for idx in range(1, args.chapters + 1):
         state.update({
@@ -75,6 +84,12 @@ def main():
             "chapter_draft": "",
             "review_comments": [],
             "review_verdict": "pass",
+            # 三路 specialist 各写各的 key，必须随章清空，
+            # 否则上一章的意见会漏进下一章的合并结果里
+            "review_comments_ooc": [],
+            "review_comments_logic": [],
+            "review_comments_pacing": [],
+            "style_report": {},
             "revision_round": 0,
             "final_chapter": "",
         })

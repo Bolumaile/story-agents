@@ -1343,19 +1343,20 @@ function handle(ev){
       break;}
     case 'writer_done':{
       doneCur(ev.round>0?('✍ 第 '+ev.round+' 轮重写完成（上限 3 轮）'):'✍ 初稿完成');
-      cur=step('🔍 校对 Agent：检查 OOC / 时间线 / 设定 / 逻辑…','on');
+      cur=step('🔍 校对 Agent ×3 并行：人物一致性 / 逻辑设定 / 节奏篇幅…','on');
       break;}
     case 'review':{
       if(ev.verdict==='fail'){
         const c=ev.comments||[];
         doneCur('⚠ 校对不通过：'+c.length+' 个严重问题 → 打回重写','bad');
-        c.forEach(x=>step('<div class="cmt">['+esc(x.type)+'] 「'+esc(x.quote)+'」 '+
+        c.forEach(x=>step('<div class="cmt">['+esc(x.from||x.type)+'] 「'+esc(x.quote)+'」 '+
           esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
         cur=step('✍ 撰稿 Agent：定向重写中（不推翻全文）…','on');
       }else{
         const minors=(ev.comments||[]).filter(x=>x.severity==='minor');
-        doneCur('🔍 校对通过'+(minors.length?'（'+minors.length+' 条 minor 意见转润色）':''),'ok');
-        minors.forEach(x=>step('<div class="cmt minor">[minor] '+esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
+        doneCur('🔍 三路校对通过'+(minors.length?'（'+minors.length+' 条 minor 意见转润色）':''),'ok');
+        minors.forEach(x=>step('<div class="cmt minor">['+esc(x.from||'minor')+'] '+
+          esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
         cur=step('✒ 润色 Agent：打磨文字（不动剧情）…','on');
       }
       break;}
@@ -1372,8 +1373,15 @@ function handle(ev){
       break;
     case 'chapter_done':{
       doneCur('✅ 第 '+ev.index+' 章《'+esc(ev.title)+'》定稿（重写 '+ev.rounds+' 轮）','ok');
+      // 去 AI 味的规则层结果：只提示，不自动改稿
+      const rep=ev.style_report||{};
+      const fs=rep.findings||[];
+      if(fs.length){
+        step('<div class="cmt minor"><b>风格体检</b>（仅供参考，未自动改稿）：<br>'+
+          fs.map(f=>esc(f.label)+'——'+esc(f.detail)).join('<br>')+'</div>');
+      }
       const chapter={index:ev.index,title:ev.title,text:ev.text,rounds:ev.rounds,
-        mock:!!ev.mock,comments:ev.minor_comments||[]};
+        mock:!!ev.mock,comments:ev.minor_comments||[],style:rep};
       runData.chapters.push(chapter);
       renderChapter(chapter);
       document.getElementById('contBtn').disabled=false;
@@ -1409,6 +1417,8 @@ function renderChapter(ch){
     <details class="chapter" open>
       <summary><b>第${ch.index}章 ${esc(ch.title)}</b>
         <span class="badge ok">重写 ${ch.rounds} 轮</span>
+        ${(ch.style&&ch.style.findings&&ch.style.findings.length)?
+          `<span class="badge warn" title="${esc((ch.style.findings||[]).map(f=>f.label).join('、'))}">风格提示 ${ch.style.findings.length}</span>`:''}
         ${ch.mock?'<span class="badge mock">Mock 示例文本 · 非真实创作</span>':''}
         <span style="flex:1"></span>
         <button type="button" class="mini" onclick="copyChapter(${ch.index},this)">复制本章</button>
@@ -1416,7 +1426,10 @@ function renderChapter(ch){
         <button type="button" class="mini" onclick="readerFeedback(${ch.index},this)">读者反馈</button>
       </summary>
       <div class="body">
-        ${ch.comments.map(x=>`<div class="cmt minor">[minor] ${esc(x.issue)} → ${esc(x.suggestion)}</div>`).join('')}
+        ${ch.comments.map(x=>`<div class="cmt minor">[${esc(x.from||'minor')}] ${esc(x.issue)} → ${esc(x.suggestion)}</div>`).join('')}
+        ${(ch.style&&ch.style.findings&&ch.style.findings.length)?
+          `<div class="cmt minor"><b>风格体检</b>（仅供参考，未自动改稿）：<br>${
+            ch.style.findings.map(f=>esc(f.label)+'——'+esc(f.detail)).join('<br>')}</div>`:''}
         <pre>${esc(ch.text)}</pre>
         <div class="fb" id="fb-${ch.index}"></div>
       </div>

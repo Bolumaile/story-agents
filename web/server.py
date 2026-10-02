@@ -305,6 +305,9 @@ def _fresh_state(req: GenReq) -> StoryState:
         user_prompt=build_user_prompt(req),
         outline={}, chapter_index=1,
         chapter_draft="", review_comments=[], review_verdict="pass",
+        # 三路并行校对 + 风格体检
+        review_comments_ooc=[], review_comments_logic=[], review_comments_pacing=[],
+        style_report={},
         revision_round=0, final_chapter="",
         meta=build_meta(req), memory={}, final_chapters=[],
     )
@@ -614,6 +617,9 @@ def api_generate(req: GenReq):
                         state.update({
                             "chapter_index": idx, "chapter_draft": "",
                             "review_comments": [], "review_verdict": "pass",
+                            # 三路 specialist 各写各的 key，每章开始必须一起清空
+                            "review_comments_ooc": [], "review_comments_logic": [],
+                            "review_comments_pacing": [], "style_report": {},
                             "revision_round": 0, "final_chapter": "",
                         })
                         push({"type": "chapter_start", "index": idx,
@@ -630,7 +636,9 @@ def api_generate(req: GenReq):
                                 elif node == "writer":
                                     push({"type": "writer_done", "index": idx,
                                           "round": state.get("revision_round", 0)})
-                                elif node == "reviewer":
+                                elif node == "merge_reviews":
+                                    # 三路 specialist 的汇合点：一次性把合并后的
+                                    # 结果推给前端（各路的中间态没有单独推送价值）
                                     push({"type": "review", "index": idx,
                                           "verdict": state["review_verdict"],
                                           "comments": state["review_comments"]})
@@ -647,6 +655,7 @@ def api_generate(req: GenReq):
                             "title": final["title"], "text": state["final_chapter"],
                             "rounds": state.get("revision_round", 0),
                             "mock": req.mock,
+                            "style_report": state.get("style_report") or {},
                             "minor_comments": [c for c in (state.get("review_comments") or [])
                                                if c.get("severity") == "minor"],
                         })
