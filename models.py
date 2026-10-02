@@ -94,6 +94,84 @@ def _dict_items(v: Any, key_hint: str) -> list:
 Str = Annotated[str, BeforeValidator(_s)]
 Int = Annotated[int, BeforeValidator(_i)]
 
+
+# ── 存量可计数化：账本要「能对账」，就必须有机器可比的数字 ────────
+# 第二次真模型实跑（2026-10-02）暴露的头号成本项：策划给的 initial_items.qty 是
+# 「约五天份」「半袋」「约两周份」这类**自由文本**，撰稿人每章得自己换算成瓶/块，
+# 于是每章算出不同的数、逻辑校对每章都报 —— 7 个重写轮次里 ch2/ch3 各撞 3 轮上限，
+# 约六成 critical 是账目类。这是"凭空多物"被止住之后**迁移出来的新形态**。
+#
+# 解法分两层：
+#   1. 提示词要求策划直接给 count（整数）+ unit（瓶/块/罐），模糊描述挪进 qty；
+#   2. 拿到手之后仍然尽力**从描述里提取数字**（"六块"→6、"5 瓶"→5），
+#      这样老存档、mock、以及不听话的模型输出也能参与对账，而不是直接放弃。
+_QTY_UNITS = "瓶块罐包个根把支盒袋张条枚口桶听片台册"
+
+_CN_NUM = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
+           "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _cn_to_int(tok: str) -> Optional[int]:
+    """中文数字 → 整数（只处理百以内，账本够用）：「六」→6、「十五」→15、「二十」→20。"""
+    if not tok:
+        return None
+    if "十" in tok:
+        left, _, right = tok.partition("十")
+        tens = _CN_NUM.get(left, 1) if left else 1
+        ones = _CN_NUM.get(right, 0) if right else 0
+        return tens * 10 + ones
+    n = 0
+    for ch in tok:
+        d = _CN_NUM.get(ch)
+        if d is None:
+            return None
+        n = n * 10 + d
+    return n
+
+
+_QTY_PREFIX = "约剩还只余仅大概有近摸多差不多"
+
+
+def _qty_to_count(qty: Any) -> Optional[int]:
+    """从存量描述里提取「件数」。提取不出返回 None（**不猜**）。
+
+    「5 瓶」「六块」「只剩两口」→ 数字；「约五天份」「半袋」「每天一瓶」→ None。
+
+    必须**锚定在描述开头**（只允许少量前缀词），否则会误伤：
+    「约五天份，每天一瓶」里的"每天一瓶"会被当成存量 1 瓶 —— 那是速率不是余量，
+    一个错的数字比对账的伤害比"没有数字"更大（会立刻触发误报）。
+    """
+    s = _s(qty).strip()
+    if not s:
+        return None
+    pre = rf"^[{_QTY_PREFIX}]{{0,3}}\s*"
+    m = re.match(pre + rf"(\d+)\s*([{_QTY_UNITS}])", s)
+    if m:
+        return int(m.group(1))
+    m = re.match(pre + rf"([零〇一二两三四五六七八九十]+)\s*([{_QTY_UNITS}])", s)
+    if m:
+        return _cn_to_int(m.group(1))
+    return None
+
+
+def _norm_count(v: Any) -> Optional[int]:
+    """任意值 → 可计数存量。无法确定就 None（**不猜、不填 0**）。"""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, float):
+        return int(v) if v >= 0 else None
+    s = _s(v).strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+", s):
+        return int(s)
+    return _qty_to_count(s)
+
+
+OptCount = Annotated[Optional[int], BeforeValidator(_norm_count)]
+
 # ── 告警：同一类问题只提醒一次，避免刷屏 ──────────────────────────
 _REPORTED: set = set()
 
@@ -263,7 +341,32 @@ class Character(BaseModel):
 # 物资不在内，撰稿人每章凭摘要自编——"吃完的压缩饼干又出现""凭空多出黄桃罐头"
 # "凭空多出牛肉干"，3 章里 2 章因这个被打回，烧掉 3 轮重写。
 
-_ITEM_NAME_KEYS = ("item", "物品", "道具", "物件", "名称", "thing")
+_ITEM_FIELD_ALIASES = {
+    "name": ("item", "物品", "道具", "物件", "名称", "thing"),
+    "count": ("数量", "件数", "余量", "num"),
+    "unit": ("单位", "units"),
+    "qty": ("存量", "剩余", "剩余量"),
+    "note": ("说明", "备注", "理由", "原因"),
+}
+
+
+def _fill_item_aliases(data):
+    """把写在同义词键上的值搬到规范字段（规范字段已有值则不动）。
+
+    模型给物资字段换名字是常态（item / 物品 / 名称，数量 / 件数，理由 / 原因…），
+    这里统一收口，免得每个字段都写一遍 alias 逻辑。
+    """
+    if not isinstance(data, dict):
+        return data
+    out = dict(data)
+    for canon, alts in _ITEM_FIELD_ALIASES.items():
+        if _s(out.get(canon)).strip():
+            continue
+        for a in alts:
+            if _s(out.get(a)).strip():
+                out[canon] = out[a]
+                break
+    return out
 
 
 class Item(BaseModel):
@@ -272,19 +375,39 @@ class Item(BaseModel):
     为什么单独立账本而不是塞进人物快照：人物快照写的是"他是谁、他在想什么"，
     物资写的是"他手上还剩什么"。混在一起模型就会用写人物状态的笔法写物资，
     余量、数量这类关键信息全丢——而那恰恰是跨章比对要用的。
+
+    count / unit 与 qty 的分工（2026-10-02 补，治"账目反复打回"）：
+    - count + unit 是**机器可比**的件数（5 瓶 / 6 块），跨章对账只认这个；
+    - qty 是给人看的描述，可写换算由来或"约三天份"这类模糊量。
+    - 只给 qty 不给 count 时仍尽力提取（"六块" → 6），提取不到才留 None。
+      留 None 不等于 0：它的意思是"这件东西数不清"，不要拿去参与加减。
     """
     name: Str = ""
-    qty: Str = ""                    # 当前存量描述（"半罐""1 瓶""约两天口粮"）
+    count: OptCount = None           # 可计数存量（件数）；None = 数不清
+    unit: Str = ""                   # 件数单位：瓶/块/罐/包…
+    qty: Str = ""                    # 当前存量描述（"半罐""约两天口粮"）
     status: ITEM_STATUS = "available"
     note: Str = ""                   # 来源 / 存放位置 / 其他说明
     chapter: Int = 0                 # 首次登记章节
     last_changed_chapter: Int = 0    # 最后一次变动章节
+
+    @model_validator(mode="before")
+    @classmethod
+    def _aliases(cls, data):
+        return _fill_item_aliases(data)
 
     @field_validator("status", mode="before")
     @classmethod
     def _coerce_status(cls, v):
         # 账本内的条目必须有确定状态；空值/非法值一律当 available（fail-open）
         return _norm_item_status(v) or "available"
+
+    @model_validator(mode="after")
+    def _derive_count(self):
+        """只写了描述（"六块"）没写 count 时，把数字补上，让老存档/mock 也能对账。"""
+        if self.count is None and self.qty:
+            self.count = _qty_to_count(self.qty)
+        return self
 
 
 class ItemChange(BaseModel):
@@ -296,24 +419,28 @@ class ItemChange(BaseModel):
     - 新物品也走这里：name 不在账本里 → 新建条目。
     """
     name: Str = ""
+    count: OptCount = None                 # 变更后的件数；None = 清单没给数字
+    unit: Str = ""                         # 件数单位（账本已有则沿用账本的）
     qty: Str = ""                          # 变更后的存量描述；空 = 不改动
     status: Optional[ITEM_STATUS] = None   # 变更后的状态；None = 不改动
-    note: Str = ""
+    note: Str = ""                         # 变动原因（消耗/给出去向…），对账要用
 
     @model_validator(mode="before")
     @classmethod
-    def _alias_name(cls, data):
-        """容忍模型把物品名写在别的键上（item / 物品 / 道具…）。"""
-        if isinstance(data, dict) and not _s(data.get("name")).strip():
-            for k in _ITEM_NAME_KEYS:
-                if _s(data.get(k)).strip():
-                    return {**data, "name": data.get(k)}
-        return data
+    def _aliases(cls, data):
+        return _fill_item_aliases(data)
 
     @field_validator("status", mode="before")
     @classmethod
     def _coerce_status(cls, v):
         return _norm_item_status(v)
+
+    @model_validator(mode="after")
+    def _derive_count(self):
+        """模型常只给描述（"两块"）不给件数，这里把数字提出来供对账。"""
+        if self.count is None and self.qty:
+            self.count = _qty_to_count(self.qty)
+        return self
 
 
 class Outline(BaseModel):

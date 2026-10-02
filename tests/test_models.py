@@ -3,6 +3,8 @@
 这一层的核心承诺是「模型给的脏数据不会打断流水线，也不会把坏值传下去」，
 所以用例集中在各种畸形输入上——真实模型输出比想象中离谱得多。
 """
+import pytest
+
 import llm
 import models
 
@@ -228,6 +230,58 @@ def test_outline_initial_items_are_parsed():
     o = models.parse_outline({"initial_items": [{"name": "水", "qty": "1 瓶"}, "干粮"]})
     assert [i.name for i in o.initial_items] == ["水", "干粮"]
     assert o.initial_items[0].status == "available"
+
+
+# ── 存量可计数化（第二次实跑暴露的最大成本项：账目反复打回）──────
+# 根因：策划给「约五天份」这类自由文本，撰稿与校对每章各换算一遍、各算一个数，
+# ch2/ch3 各撞 3 轮重写上限。这几条钉住"件数能从哪来、不能从哪来"。
+@pytest.mark.parametrize("qty,expected", [
+    ("5 瓶", 5),
+    ("六块", 6),
+    ("两罐", 2),
+    ("十五盒", 15),
+    ("只剩两口", 2),
+    ("还剩 2 罐", 2),
+    ("约五天份", None),          # 模糊量：没有件数，不许猜
+    ("半袋", None),
+    ("半瓶", None),
+    ("", None),
+    ("约五天份，每天一瓶", None),  # 关键误报：末尾"每天一瓶"是速率不是余量
+    ("若干瓶", None),
+])
+def test_qty_to_count_extracts_only_unambiguous_numbers(qty, expected):
+    assert models._qty_to_count(qty) == expected
+
+
+def test_item_derives_count_from_qty_description():
+    """只写描述（"6块"）没写 count 时，把数字补上——老存档与 mock 靠这条参与对账。"""
+    it = models.Item(name="压缩饼干", qty="6块", unit="块")
+    assert (it.count, it.unit) == (6, "块")
+
+
+def test_item_count_stays_none_when_description_is_fuzzy():
+    """提取不出就留 None，**不能填 0**：None 的含义是"数不清"，拿去加减会立刻算错。"""
+    it = models.Item(name="大米", qty="约两周份")
+    assert it.count is None
+
+
+def test_negative_item_count_is_rejected():
+    assert models.Item(name="x", count=-3).count is None
+
+
+def test_item_change_accepts_chinese_field_aliases():
+    """模型会把件数/单位/原因写到同义词键上（数量/单位/理由），必须收得住。"""
+    d = models.parse_memory_delta({"item_changes": [
+        {"名称": "矿泉水", "数量": 5, "单位": "瓶", "理由": "本周喝掉一瓶"}]})
+    ch = d.item_changes[0]
+    assert (ch.name, ch.count, ch.unit) == ("矿泉水", 5, "瓶")
+    assert ch.note == "本周喝掉一瓶", "『理由』没被收敛到 note，对账就无从判断是否说了原因"
+
+
+def test_item_change_derives_count_from_qty():
+    """结算只给"两块"不给件数时，也要能把 2 提出来做加减。"""
+    d = models.parse_memory_delta({"item_changes": [{"name": "饼干", "qty": "两块"}]})
+    assert d.item_changes[0].count == 2
 
 
 # ── 角色名归一（人物快照防裂条）──────────────────────────────
