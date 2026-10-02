@@ -55,7 +55,19 @@ set "RUNNING="
 for /f "tokens=*" %%L in ('netstat -ano ^| findstr ":8765" ^| findstr "LISTENING"') do set "RUNNING=1"
 if defined RUNNING (
   echo.
-  echo [Story Agents] Port 8765 is ALREADY in use - server is probably already running.
+  echo [Story Agents] Port 8765 is ALREADY in use - a server is probably already running.
+  echo.
+  echo   ###  IF YOU EDITED ANY .py FILE, READ THIS FIRST  ###
+  echo   The running server was started BEFORE your edit and still holds the
+  echo   OLD code in memory - it runs WITHOUT --reload. Re-opening the page
+  echo   will NOT pick up your changes. You would be testing old code.
+  echo.
+  echo   To load the new code:
+  echo     1. Find the console window running uvicorn, press Ctrl+C there
+  echo     2. Run start.bat again
+  echo.
+  echo   If you did NOT change any code, ignore this and use the page.
+  echo.
   echo [Story Agents] Opening http://127.0.0.1:8765 ...
   start "" "http://127.0.0.1:8765"
   echo.
