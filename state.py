@@ -12,10 +12,20 @@ class StoryState(TypedDict):
     # —— 单章流程 ——
     chapter_index: int            # 当前写的章节序号（从 1 起）
     chapter_draft: str            # 撰稿草稿
-    review_comments: List[Dict]   # 校对反馈清单（问题+建议+严重等级）
+    review_comments: List[Dict]   # 校对反馈清单（三路合并后的最终结果）
     review_verdict: str           # "pass" / "fail"
     revision_round: int           # 当前章已重写轮数
     final_chapter: str            # 润色后定稿章节
+
+    # —— 校对拆分为三路并行 specialist ——
+    # 每个节点只写自己这一个 key。并行节点若同时写同一个 key 会互相覆盖，
+    # 所以让它们各写各的，再由 review_merge 汇总成上面的 review_comments。
+    review_comments_ooc: List[Dict]
+    review_comments_logic: List[Dict]
+    review_comments_pacing: List[Dict]
+
+    # —— 去 AI 味检测报告（仅提示，不参与流程判定）——
+    style_report: Dict[str, Any]
 
     # —— 可选进阶材料（表单收集，撰写/校对/润色共用）——
     meta: Dict[str, Any]          # {style_sample, word_count, foreshadow, cliffhanger, forbidden_list}

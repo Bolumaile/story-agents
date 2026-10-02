@@ -324,11 +324,41 @@ class MockLLM:
                     "potential_conflicts": "与守堤人老崔对真相的知情权分歧"}],
                 "chapters": [{"index": 1, "title": "雨夜来客",
                               "outline": "雨夜，陌生访客敲开林岸的门，带来了半页残缺的笔记。",
-                              "turning_point": "林岸认出笔记上的字迹是父亲的", "notes": ""}],
+                              "turning_point": "林岸认出笔记上的字迹是父亲的",
+                              "beats": [
+                                  {"goal": "林岸在雨夜独处，交代他的戒备与独居状态",
+                                   "conflict": "无", "turn": "敲门声打断平静",
+                                   "words": 600, "emotion": 2},
+                                  {"goal": "来访者递上半页残缺笔记",
+                                   "conflict": "林岸不信任来客，不肯开门",
+                                   "turn": "笔记出现，局面改变",
+                                   "words": 900, "emotion": 3},
+                                  {"goal": "林岸辨认笔记字迹",
+                                   "conflict": "内心抗拒承认这个可能",
+                                   "turn": "确认是父亲的笔迹",
+                                   "words": 700, "emotion": 4},
+                              ],
+                              "notes": ""}],
                 "core_conflict": "真相与安全的取舍",
                 "ending_direction": "开放式：堤上留下脚印，人未归",
             }, ensure_ascii=False)
-        if "Reviewer" in system:
+        # 校对拆成三路并行后，Mock 也要分流（判断顺序：具体的在前）。
+        # 只让 OOC 这一路在第一轮打回——三路同时 fail 会让重写轮数行为难以验证。
+        if "ReviewerOOC" in system:
+            if "revision_round=0" in user:
+                return json.dumps({
+                    "verdict": "fail",
+                    "comments": [{"type": "ooc", "severity": "critical",
+                                  "quote": "林岸笑着说出了家庭住址",
+                                  "issue": "违反人物禁忌：绝不对陌生人透露家庭住址",
+                                  "suggestion": "改为沉默应对，转移话题"}],
+                }, ensure_ascii=False)
+            return json.dumps({"verdict": "pass", "comments": []}, ensure_ascii=False)
+        if "ReviewerLogic" in system:
+            return json.dumps({"verdict": "pass", "comments": []}, ensure_ascii=False)
+        if "ReviewerPacing" in system:
+            return json.dumps({"verdict": "pass", "comments": []}, ensure_ascii=False)
+        if "Reviewer" in system:          # 兜底：未拆分的老式单一校对提示词
             if "revision_round=0" in user:
                 return json.dumps({
                     "verdict": "fail",
@@ -346,11 +376,19 @@ class MockLLM:
         if "Polisher" in system:
             return "[润色后] " + user.split("正文如下：")[-1].strip()
         if "MemorySettler" in system:
+            # 按章号产出递增的伏笔 id，且不推进任何旧伏笔。
+            # 这样跑够章数就能顺带验证两件事：伏笔状态机去重、以及
+            # 「埋太久没推进」的超期巡检会不会真的报警。
+            m = re.search(r"第(\d+)章", user)
+            idx = int(m.group(1)) if m else 1
             return json.dumps({
-                "summary": "林岸收到半页笔记，确认字迹属于失踪的父亲，与来客达成试探性合作。",
-                "new_foreshadows": [{"id": "F1", "desc": "笔记折角折法是父亲独有的习惯"}],
+                "summary": f"第{idx}章：林岸收到半页笔记，逐步接近父亲失踪的真相。",
+                "new_foreshadows": [
+                    {"id": f"F{idx}", "desc": f"第{idx}章留下的悬念：折角与缺页"}],
                 "resolved_foreshadows": [],
-                "character_updates": [{"name": "林岸", "state": "确认父亲失踪另有隐情，进入戒备状态"}],
+                "advanced_foreshadows": [],
+                "character_updates": [
+                    {"name": "林岸", "state": "确认父亲失踪另有隐情，进入戒备状态"}],
             }, ensure_ascii=False)
         if "ReaderAgent" in system:
             return ("读下来像在雨夜隔着一层玻璃看别人生活——安静，但一直有东西在轻轻敲。"

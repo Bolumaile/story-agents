@@ -16,18 +16,22 @@ import pytest  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _reset_llm_globals():
-    """每个用例前后复位 llm 模块的进程级全局状态。
+    """每个用例前后复位模块级全局状态。
 
-    llm.USE_MOCK / 进度回调 / 告警回调都是模块级单例，用例之间会互相污染
-    （典型症状：某个用例设了 USE_MOCK=True，后面的用例莫名其妙全走 mock）。
+    llm.USE_MOCK / 进度回调 / 告警回调 / models 的告警去重表都是模块级单例，
+    用例之间会互相污染（典型症状：某个用例设了 USE_MOCK=True，
+    后面的用例莫名其妙全走 mock；或前一个用例吃掉了告警、后一个断言不到）。
     """
     import llm
+    import models
 
     old_mock = llm.USE_MOCK
+    models.reset_warnings()
     yield
     llm.USE_MOCK = old_mock
     llm.set_progress_cb(None)
     llm.set_notice_cb(None)
+    models.reset_warnings()
 
 
 @pytest.fixture
@@ -48,6 +52,11 @@ def initial_state(prompt: str = "测试需求") -> dict:
         "chapter_draft": "",
         "review_comments": [],
         "review_verdict": "pass",
+        # 三路并行校对：每路各写各的 key
+        "review_comments_ooc": [],
+        "review_comments_logic": [],
+        "review_comments_pacing": [],
+        "style_report": {},
         "revision_round": 0,
         "final_chapter": "",
         "meta": {},
