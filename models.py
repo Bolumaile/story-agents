@@ -9,6 +9,11 @@
   3 章烧掉 3 轮重写。现在物资进账本，撰稿端只能用账本内的东西。
 - `canon_name()`：角色名归一。原先按 name 精确匹配合并人物快照，
   模型换个称呼（「橘猫（流浪猫）」/「橘猫」/「猫」）就新建一条，同一角色裂成多条。
+- `Setting` / `SettingChange`：设定档案（第四本账）。原先前三本账只覆盖
+  伏笔 / 人物 / 物资，**地点与物理设定不在任何一本里**——校对手上没有"与前文一致"
+  的依据，于是把第 1 章早已确立的「店面卷帘门 + 后门铁门」连着两轮判成 critical
+  设定矛盾（正文没按它改是对的）。设定进档后，撰稿端知道这是既成事实、
+  逻辑校对端有了比对基准，误报从源头掐掉。
 
 设计取舍（与本项目一贯的 fail-open 哲学一致）
 ------------------------------------------------
@@ -272,6 +277,73 @@ def _norm_item_status(v: Any) -> Optional[str]:
     return None
 
 
+# ── 设定档案的状态与类型归一 ─────────────────────────────────────
+# 设定档案记的是"这个地方/这条规则长什么样"这类**既成事实**，与物资最大的区别是
+# 它没有"消耗"概念，只有"还算不算数"：便利店被烧了、某个组织解散了，那条设定就作废。
+# 于是状态只有两个值。空值在**变更条目**里表示"本次不改动"（与物资一致），
+# 在**账本条目**里表示"有效"（fail-open，老存档/漏写都按有效处理）。
+
+SETTING_STATUS = Literal["active", "retired"]
+
+_SETTING_STATUS_ALIASES = {
+    "active": "active", "established": "active", "canon": "active", "valid": "active",
+    "有效": "active", "已确立": "active", "确立": "active", "仍成立": "active",
+    "retired": "retired", "gone": "retired", "destroyed": "retired", "abandoned": "retired",
+    "废弃": "retired", "作废": "retired", "失效": "retired", "已毁": "retired",
+    "毁坏": "retired", "烧毁": "retired", "拆除": "retired", "不再成立": "retired",
+}
+
+
+def _norm_setting_status(v: Any) -> Optional[str]:
+    """设定状态归一。空值返回 None（= 本次不改动 / 交由上层补默认值）。"""
+    raw = _s(v).strip()
+    if not raw:
+        return None
+    key = raw.lower()
+    if key in _SETTING_STATUS_ALIASES:
+        return _SETTING_STATUS_ALIASES[key]
+    if raw in _SETTING_STATUS_ALIASES:
+        return _SETTING_STATUS_ALIASES[raw]
+    _warn(f"setting.status.{key}",
+          f"设定档案给出的状态「{raw}」不是合法值（只接受 active / retired），"
+          f"本次不改动该设定状态。")
+    return None
+
+
+SETTING_KIND = Literal["place", "object", "rule", "relation", "other"]
+
+_SETTING_KIND_ALIASES = {
+    "place": "place", "location": "place", "地点": "place", "场所": "place",
+    "位置": "place", "场景": "place", "地方": "place", "环境": "place",
+    "object": "object", "物件": "object", "物品": "object", "道具": "object",
+    "设施": "object", "建筑": "object", "固定物件": "object", "地形": "object",
+    "rule": "rule", "规则": "rule", "世界规则": "rule", "力量规则": "rule",
+    "机制": "rule", "约束": "rule", "设定法则": "rule",
+    "relation": "relation", "关系": "relation", "组织": "relation",
+    "势力": "relation", "人物关系": "relation", "阵营": "relation",
+    "other": "other", "其他": "other", "其它": "other", "misc": "other",
+}
+
+
+def _norm_setting_kind(v: Any) -> str:
+    """设定类型归一。空值返回 ""（= 本次不改动）；无法识别归 other 并告警。
+
+    为什么不把无法识别的一律当 other 静默处理：类型会直接影响校对怎么用它
+    ——把「规则」当「地点」，校对就会拿场景描写的标准去比，白报一串。
+    """
+    raw = _s(v).strip()
+    if not raw:
+        return ""
+    key = raw.lower()
+    k = _SETTING_KIND_ALIASES.get(key) or _SETTING_KIND_ALIASES.get(raw)
+    if k:
+        return k
+    _warn(f"setting.kind.{key}",
+          f"设定档案给出的类型「{raw}」不是合法值"
+          f"（只接受 place / object / rule / relation / other），已按 other 处理。")
+    return "other"
+
+
 # ── 角色名归一（人物快照防裂条）──────────────────────────────────
 
 _BRACKET_RE = re.compile(r"[（(【\[][^）)】\]]*[）)】\]]")
@@ -350,16 +422,16 @@ _ITEM_FIELD_ALIASES = {
 }
 
 
-def _fill_item_aliases(data):
+def _fill_aliases(data, aliases: dict):
     """把写在同义词键上的值搬到规范字段（规范字段已有值则不动）。
 
-    模型给物资字段换名字是常态（item / 物品 / 名称，数量 / 件数，理由 / 原因…），
+    模型给字段换名字是常态（item / 物品 / 名称，数量 / 件数，理由 / 原因…），
     这里统一收口，免得每个字段都写一遍 alias 逻辑。
     """
     if not isinstance(data, dict):
         return data
     out = dict(data)
-    for canon, alts in _ITEM_FIELD_ALIASES.items():
+    for canon, alts in aliases.items():
         if _s(out.get(canon)).strip():
             continue
         for a in alts:
@@ -367,6 +439,23 @@ def _fill_item_aliases(data):
                 out[canon] = out[a]
                 break
     return out
+
+
+def _fill_item_aliases(data):
+    return _fill_aliases(data, _ITEM_FIELD_ALIASES)
+
+
+_SETTING_FIELD_ALIASES = {
+    "name": ("setting", "地点", "场所", "场景", "设定", "名称", "location", "thing"),
+    "detail": ("描述", "说明", "内容", "详情", "设定内容", "特征"),
+    "kind": ("类型", "类别", "category", "type"),
+    "status": ("状态",),
+    "note": ("备注", "理由", "原因"),
+}
+
+
+def _fill_setting_aliases(data):
+    return _fill_aliases(data, _SETTING_FIELD_ALIASES)
 
 
 class Item(BaseModel):
@@ -443,6 +532,78 @@ class ItemChange(BaseModel):
         return self
 
 
+# ── 设定档案（第四本账）─────────────────────────────────────────
+# 第四次真模型实跑（2026-10-02）暴露的缺口：地点、物理设施、世界规则不属于
+# 伏笔 / 人物 / 物资任何一本账。前情摘要只记情节，top-k 又只带上一章，
+# 于是逻辑校对手里**没有判断"与前文一致"的依据**——它连着两轮把
+# 「便利店卷帘门在落」判成 critical 设定矛盾，而第 1 章早就建立了卷帘门 + 后门铁门
+# （正文没按它改是对的）。这是纯粹的误报，代价却是白烧重写轮次。
+#
+# 为什么不复用伏笔池：伏笔有的是"悬念"，会 open → progressing → resolved；
+# 设定自确立起就**始终成立**，没有"揭晓"这回事，只在被销毁/废弃时才失效
+# （status: active → retired）。两者的生命周期不同，混在一本账里，
+# 伏笔的超期巡检会把所有地点都当成"埋太久没推进"报出来。
+
+class Setting(BaseModel):
+    """设定档案里的一条既成设定（权威记录）。
+
+    与 Item 一样以 name 作主键（走 canon_name 归一匹配）：
+    「便利店（镇口）」与「便利店」是同一处，不该裂成两条。
+    """
+    name: Str = ""
+    detail: Str = ""                   # 具体描述：位置、物理特征、规则内容
+    kind: SETTING_KIND = "other"       # place / object / rule / relation / other
+    status: SETTING_STATUS = "active"  # active = 仍成立；retired = 已废弃/已毁
+    note: Str = ""
+    chapter: Int = 0                   # 确立章节
+    last_mentioned_chapter: Int = 0    # 最后一次被写下或核对的章节
+
+    @model_validator(mode="before")
+    @classmethod
+    def _aliases(cls, data):
+        return _fill_setting_aliases(data)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _coerce_kind(cls, v):
+        # 账本条目必须有确定的类型；空值/非法值一律当 other（fail-open，不拒绝整条）
+        return _norm_setting_kind(v) or "other"
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _norm_setting_status(v) or "active"
+
+
+class SettingChange(BaseModel):
+    """记忆结算给出的单条设定变动。留空的字段 = 本次不改动该项。
+
+    与 Setting 分开的理由同 ItemChange：
+    "这个地点补一条描写"（改 detail）与"这个地点被烧了"（改 status）是两件事，
+    合在一起就会出现"只补描写时状态被默认值覆盖回 active"的复活 bug。
+    """
+    name: Str = ""
+    detail: Str = ""                          # 变更后的描述；空 = 不改动
+    kind: Str = ""                            # 变更后的类型；空 = 不改动
+    status: Optional[SETTING_STATUS] = None   # 变更后的状态；None = 不改动
+    note: Str = ""                            # 变动原因（本章新设/被毁/补充细节…）
+
+    @model_validator(mode="before")
+    @classmethod
+    def _aliases(cls, data):
+        return _fill_setting_aliases(data)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _coerce_kind(cls, v):
+        return _norm_setting_kind(v)          # 空 => ""（不改动）
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _norm_setting_status(v)        # 空 => None（不改动）
+
+
 class Outline(BaseModel):
     title: Str = ""
     theme: Str = ""
@@ -455,6 +616,10 @@ class Outline(BaseModel):
     # 而第 1 章 0 轮重写通过 → 内伤被当正典固化，后续每章都要重新审一遍"。
     # 让策划先把清单立住，撰稿端从第一章起就有账本可比对。
     initial_items: List[Item] = Field(default_factory=list)
+    # 开局设定档案：地点、固定设施、世界规则。
+    # 为什么也要在策划阶段立：与物资同理——第 1 章自己"现编"的设定一旦被后续章节
+    # 当正典复用，前后不一致就要等到很晚才被发现；先立档，第 1 章的撰稿人就有基准。
+    initial_settings: List[Setting] = Field(default_factory=list)
 
     @field_validator("characters", mode="before")
     @classmethod
@@ -469,6 +634,11 @@ class Outline(BaseModel):
     @field_validator("initial_items", mode="before")
     @classmethod
     def _coerce_items(cls, v):
+        return _dict_items(v, "name")
+
+    @field_validator("initial_settings", mode="before")
+    @classmethod
+    def _coerce_settings(cls, v):
         return _dict_items(v, "name")
 
     @model_validator(mode="after")
@@ -542,18 +712,30 @@ class ChapterSummary(BaseModel):
     summary: Str = ""
 
 
+# 每个记忆列表的"元素写成裸字符串时该归到哪个字段"。
+# 为什么必须做这一层：**记忆库面板是让用户直接编辑 JSON 的**，
+# 而 `{"items": ["矿泉水"]}` 这种简写会让 List[Item] 直接抛 ValidationError。
+# 抛在 memory_settler_node 的解析处（那一步在 try 之外）就是整章崩掉——
+# 与 models.py 的 fail-open 哲学正好相反：脏数据该被收敛，不该终止创作。
+# 注意必须放模块级：类属性以 `_` 开头会被 Pydantic 认成私有属性（ModelPrivateAttr），
+# 取出来不是 dict。
+_MEMORY_LIST_HINTS = {"chapter_summaries": "summary", "foreshadow_pool": "desc",
+                      "character_states": "name", "items": "name", "settings": "name"}
+
+
 class Memory(BaseModel):
     """故事记忆库（全量权威数据）。"""
     chapter_summaries: List[ChapterSummary] = Field(default_factory=list)
     foreshadow_pool: List[Foreshadow] = Field(default_factory=list)
     character_states: List[CharacterState] = Field(default_factory=list)
     items: List[Item] = Field(default_factory=list)     # 物资道具账本
+    settings: List[Setting] = Field(default_factory=list)  # 设定档案（地点/设施/规则）
 
     @field_validator("chapter_summaries", "foreshadow_pool",
-                     "character_states", "items", mode="before")
+                     "character_states", "items", "settings", mode="before")
     @classmethod
-    def _coerce_lists(cls, v):
-        return _as_list(v)
+    def _coerce_lists(cls, v, info):
+        return _dict_items(v, _MEMORY_LIST_HINTS[info.field_name])
 
 
 class MemoryDelta(BaseModel):
@@ -564,6 +746,7 @@ class MemoryDelta(BaseModel):
     advanced_foreshadows: List[str] = Field(default_factory=list)
     character_updates: List[CharacterState] = Field(default_factory=list)
     item_changes: List[ItemChange] = Field(default_factory=list)
+    setting_updates: List[SettingChange] = Field(default_factory=list)
 
     @field_validator("new_foreshadows", mode="before")
     @classmethod
@@ -578,6 +761,11 @@ class MemoryDelta(BaseModel):
     @field_validator("item_changes", mode="before")
     @classmethod
     def _coerce_item_changes(cls, v):
+        return _dict_items(v, "name")
+
+    @field_validator("setting_updates", mode="before")
+    @classmethod
+    def _coerce_setting_updates(cls, v):
         return _dict_items(v, "name")
 
     @field_validator("resolved_foreshadows", "advanced_foreshadows", mode="before")

@@ -49,6 +49,20 @@ def _rank_open_foreshadows(open_pool, idx: int) -> list:
     return sorted(open_pool, key=key)
 
 
+# 设定档案的展示标签。放模块级是因为「记忆上下文」与「结算请求」两处都要用同一套，
+# 各自维护一份迟早会漂。
+_SETTING_KIND_LABEL = {"place": "【地点】", "object": "【设施】",
+                       "rule": "【规则】", "relation": "【关系】", "other": ""}
+
+
+def _setting_line(s) -> str:
+    """把设定条目渲染成一行，给记忆结算员看（含类型与废弃标注）。"""
+    label = _SETTING_KIND_LABEL.get(s.kind or "other", "")
+    detail = f"：{s.detail}" if (s.detail or "").strip() else ""
+    tag = "【已废弃】" if s.status != "active" else ""
+    return f"- {label}{s.name}{detail}{tag}"
+
+
 def _qty_display(count, unit, qty) -> str:
     """账本存量的展示口径：有件数就用件数（5 瓶），没有才退回描述。
 
@@ -62,10 +76,11 @@ def _qty_display(count, unit, qty) -> str:
 
 
 def _memory_context(state: StoryState, plan: dict = None) -> str:
-    """故事记忆：必带项（未回收伏笔 + 人物快照 + 物资账本）+ 检索项（相关前情摘要）。
+    """故事记忆：必带项（未回收伏笔 + 人物快照 + 物资账本 + 设定档案）+ 检索项（相关前情摘要）。
 
     为什么分成两类：
-    - 未回收伏笔、人物当前快照、物资账本一旦漏掉，长篇立刻出现设定崩坏 —— 必带，不参与淘汰。
+    - 未回收伏笔、人物当前快照、物资账本、已确立设定一旦漏掉，长篇立刻出现设定崩坏
+      —— 必带，不参与淘汰。
     - 前情摘要会随章节数线性膨胀，正是要按相关度检索的那部分。
     """
     plan = plan or {}
@@ -74,7 +89,8 @@ def _memory_context(state: StoryState, plan: dict = None) -> str:
     pool = [f for f in (mem.get("foreshadow_pool") or []) if isinstance(f, dict)]
     chars = [c for c in (mem.get("character_states") or []) if isinstance(c, dict)]
     items = [i for i in (mem.get("items") or []) if isinstance(i, dict)]
-    if not summaries and not pool and not chars and not items:
+    settings = [s for s in (mem.get("settings") or []) if isinstance(s, dict)]
+    if not summaries and not pool and not chars and not items and not settings:
         return "（这是第一章，暂无故事记忆）"
 
     idx = plan.get("index") or state.get("chapter_index") or 1
@@ -133,6 +149,43 @@ def _memory_context(state: StoryState, plan: dict = None) -> str:
                 f"[{'已耗尽' if it.get('status') == 'consumed' else '已丢失'}]"
                 for it in gone)
             lines.append(f"- （以下已不可用，本章绝不能再次出现：{names}）")
+
+    # 必带项 4：设定档案（地点 / 固定设施 / 世界规则）
+    # 为什么必带：逻辑校对手上原本**没有任何"与前文一致"的依据**——前情摘要只记情节，
+    # top-k 又只带上一章。第四次实跑里，第 1 章早已确立的「便利店卷帘门 + 后门铁门」
+    # 在第 4 章被连着两轮判成 critical 设定矛盾，正文没按它改是对的：
+    # 那是纯粹的误报，代价却是白烧重写轮次。有了这本账，判断基准就落到了纸面上。
+    if settings:
+        active = [s for s in settings if (s.get("status") or "active") == "active"]
+        gone_s = [s for s in settings if (s.get("status") or "active") != "active"]
+        lines.append("【已确立设定（必带）——这些是既成事实，与前文一致的描写不算矛盾】")
+        # 排序：最久没被提到的排前面。依据是"边际价值"，不是"重要性"——
+        # 撰稿与校对每章都能拿到**上一章全文**，越是新近出现过的设定，越可能已经在
+        # 那份全文里；反过来，第 1 章立下、此后再没提过的设定，除了这本档案之外
+        # 没有任何别的来源，它恰恰是最容易被误判为"与前文矛盾"的那一类。
+        ranked = sorted(active, key=lambda s: (s.get("last_mentioned_chapter")
+                                               or s.get("chapter") or 0,
+                                               s.get("chapter") or 0))
+        limit = max(1, config.MEMORY_SETTING_MAX)
+        shown, hidden = ranked[:limit], ranked[limit:]
+        for s in shown:
+            label = _SETTING_KIND_LABEL.get(s.get("kind") or "other", "")
+            seg = f"- {label}{s.get('name')}"
+            if (s.get("detail") or "").strip():
+                seg += f"：{s.get('detail')}"
+            ch = s.get("chapter") or 0
+            seg += f"（第{ch}章确立）" if ch else "（确立章节不详）"
+            if (s.get("note") or "").strip():
+                seg += f"｜{s.get('note')}"
+            lines.append(seg)
+        if hidden:
+            names = "、".join(str(s.get("name")) for s in hidden)
+            lines.append(f"- （另有 {len(hidden)} 条较早设定未列描述：{names}"
+                         f"——它们同样有效，凡正文与前文冲突，一律以设定档案为准，"
+                         f"不要判为矛盾）")
+        if gone_s:
+            names = "、".join(f"{s.get('name')}[已废弃]" for s in gone_s)
+            lines.append(f"- （以下设定已废弃/已毁，不得再当作有效设定或场景使用：{names}）")
 
     # 检索项：相关前情摘要
     earlier = [s for s in summaries if (s.get("chapter") or 0) < idx]
@@ -263,6 +316,16 @@ def planner_node(state: StoryState) -> dict:
                         qty=it.qty.strip(), note=it.note.strip(),
                         status="available", chapter=1, last_changed_chapter=1)
             for it in outline.initial_items if it.name.strip()
+        ]
+    # 开局设定档案同理：地点 / 固定设施 / 世界规则在策划阶段就立档。
+    # 撰稿从第 1 章起就有"既成事实"可依，逻辑校对也有了比对基准——
+    # 治的正是「第 1 章立下的那两扇门，第 4 章被当成设定矛盾判 critical」这类误报。
+    if not memory.settings:
+        memory.settings = [
+            models.Setting(name=s.name.strip(), detail=s.detail.strip(),
+                           kind=s.kind, status="active", note=s.note.strip(),
+                           chapter=1, last_mentioned_chapter=1)
+            for s in outline.initial_settings if s.name.strip()
         ]
     # 账本要「能逐章对账」，前提是它带着数字。策划给「约五天份」这类模糊量时，
     # 后续每一章的撰稿与校对都会各自换算一遍、各自算出不同的数 —— 实测这是烧掉
@@ -552,7 +615,7 @@ def polisher_node(state: StoryState) -> dict:
 # ── 5. 记忆结算员（MemorySettler，润色定稿后运行）──────────────
 def _empty_memory() -> dict:
     return {"chapter_summaries": [], "foreshadow_pool": [],
-            "character_states": [], "items": []}
+            "character_states": [], "items": [], "settings": []}
 
 
 def _item_line(it) -> str:
@@ -587,11 +650,14 @@ def memory_settler_node(state: StoryState) -> dict:
     names_txt = "、".join(cs.name for cs in mem.character_states if cs.name) or "（暂无）"
     items_txt = "\n".join(_item_line(it) for it in mem.items) \
         or "（空——本章正文里出现的物资将作为账本起点）"
+    settings_txt = "\n".join(_setting_line(s) for s in mem.settings) \
+        or "（空——本章正文里确立的地点与规则将作为档案起点）"
     user_msg = (
         f"【本章信息】第{idx}章《{plan['title']}》\n"
         f"【当前伏笔池（resolved / advanced 的 id 只能从中选）】\n{pool_txt}\n\n"
         f"【当前人物名单（character_updates 的 name 只能从中选）】\n{names_txt}\n\n"
         f"【当前物资账本（item_changes 的 name 优先取账本原名）】\n{items_txt}\n\n"
+        f"【当前设定档案（setting_updates 的 name 优先取档案原名）】\n{settings_txt}\n\n"
         f"【本章定稿正文】\n{state['final_chapter']}\n\n"
         f"请输出本章记忆结算 JSON。")
     try:
@@ -713,6 +779,56 @@ def memory_settler_node(state: StoryState) -> dict:
                 f"{hit.name}：件数由 {prev_count}{unit} 变为 {new_count}{unit}，"
                 f"结算未说明原因（正文里可能凭空消耗或新增），请核对")
         hit.last_changed_chapter = idx
+
+    # ── 设定档案：新增 or 更新，名字走同一套 canon_name 归一 ──
+    # 与物资的差别：设定不会"消耗"，只会在被毁/废弃时失效，所以不做数量对账；
+    # 要守的是另外两条：
+    #   ① 空字段不覆盖（"只补一句描写"不能把 status 刷回 active，那是复活 bug 的设定版）；
+    #   ② 标为废弃却不说原因 → 告警（某个地点悄悄失效，后文就会莫名把它写没了）。
+    s_by_key = {models.canon_name(s.name): s for s in mem.settings if s.name.strip()}
+    retired = []                       # [(名字, 是否写了原因)]
+    for sc in delta.setting_updates:
+        name = sc.name.strip()
+        if not name:
+            continue
+        key = models.canon_name(name)
+        hit = s_by_key.get(key) if key else None
+        if hit is None:
+            # 只报名字、不附带任何信息的条目：那只是"本章提到了某个还不成档的东西"，
+            # 没有新信息可记。放它进档会往档案里塞一堆空壳条目，把真设定挤掉。
+            if not (sc.detail or sc.kind or sc.status or sc.note):
+                continue
+            it = models.Setting(name=name, detail=sc.detail,
+                                kind=sc.kind or "other",
+                                status=sc.status or "active", note=sc.note,
+                                chapter=idx, last_mentioned_chapter=idx)
+            mem.settings.append(it)
+            s_by_key[key or name] = it
+            continue
+        if sc.detail:
+            hit.detail = sc.detail
+        if sc.kind:
+            hit.kind = sc.kind
+        if sc.status:
+            hit.status = sc.status
+            if sc.status == "retired":
+                retired.append((hit.name, bool(sc.note.strip())))
+        if sc.note:
+            hit.note = sc.note
+        # 只要本章结算提到了它，就算"还活着"——排序靠的就是这个时间戳。
+        # 没提到也不惩罚：陈旧只会让它更早出现在提示里（安全侧）。
+        hit.last_mentioned_chapter = idx
+
+    if retired:
+        names = "、".join(n for n, _ in retired)
+        silent = [n for n, has_note in retired if not has_note]
+        level = "warn" if silent else "info"
+        extra = (f"其中 {len(silent)} 条没写废弃原因（{'、'.join(silent)}），"
+                 f"请核对正文是否真的交代了它为何失效。" if silent else "")
+        llm.emit_notice(
+            level,
+            f"第{idx}章设定档案：{names} 被标记为已废弃，"
+            f"后续章节不会再把它当作有效设定。{extra}")
 
     if recon:
         shown = "；".join(recon[:4])

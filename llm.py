@@ -350,6 +350,16 @@ class MockLLM:
                      "qty": "五天份的水，每天一瓶", "note": "背包侧袋"},
                     {"name": "手电筒", "count": 1, "unit": "支", "note": "电量不明"},
                 ],
+                # 开局设定档案。第一条直接照搬第四次实跑里被误判的那处设施
+                # （卷帘门 + 后门铁门）：离线测试里能顺手验证"清单里已确立的东西
+                # 不该被当成设定矛盾"这条约束有没有生效。
+                "initial_settings": [
+                    {"name": "便利店", "kind": "object",
+                     "detail": "镇上唯一还开着的店，门脸是卷帘门，后面还有一扇铁门",
+                     "note": "镇口"},
+                    {"name": "老堤防", "kind": "place",
+                     "detail": "镇外沿河的土堤，堤面窄，两侧是连片鱼塘"},
+                ],
             }, ensure_ascii=False)
         if "ChapterExtender" in system:
             # 用 【本章序号】 当锚点取章号：这条 prompt 里到处是「第N章」，
@@ -425,6 +435,21 @@ class MockLLM:
                           "qty": "1 张", "note": "第2章在路上捡到"}]
             else:
                 items = []
+            # 设定档案按章给，三条路径各覆盖一次：
+            #   第 1 章 = 只报名字（既有设定"我还活着"的确认）；
+            #   第 2 章 = 新确立一条（kind + detail）；
+            #   第 3 章 = 把一条标为废弃并写明原因。
+            if idx == 1:
+                settings = [{"name": "便利店"}, {"name": "老堤防"}]
+            elif idx == 2:
+                settings = [{"name": "废弃水文站", "kind": "place",
+                             "detail": "堤外坡上一间锁着的砖房，窗户缺了一块玻璃",
+                             "note": "第2章在堤上望见并走近"}]
+            elif idx == 3:
+                settings = [{"name": "废弃水文站", "status": "retired",
+                             "note": "第3章夜里塌了一角，已不能再落脚"}]
+            else:
+                settings = []
             return json.dumps({
                 "summary": f"第{idx}章：林岸收到半页笔记，逐步接近父亲失踪的真相。",
                 "new_foreshadows": [
@@ -434,6 +459,7 @@ class MockLLM:
                 "character_updates": [
                     {"name": who, "state": "确认父亲失踪另有隐情，进入戒备状态"}],
                 "item_changes": items,
+                "setting_updates": settings,
             }, ensure_ascii=False)
         if "ReaderAgent" in system:
             return ("读下来像在雨夜隔着一层玻璃看别人生活——安静，但一直有东西在轻轻敲。"

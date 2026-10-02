@@ -31,8 +31,10 @@ class StoryState(TypedDict):
     meta: Dict[str, Any]          # {style_sample, word_count, foreshadow, cliffhanger, forbidden_list}
 
     # —— 故事记忆（每章定稿后由记忆结算员更新）——
-    # {chapter_summaries, foreshadow_pool, character_states, items}
-    # items 是物资账本：撰稿端只能用账本内的物资，已耗尽/已丢失的不许再用。
+    # {chapter_summaries, foreshadow_pool, character_states, items, settings}
+    # 四本账都属「必带项」，写每章时必定带上：
+    #   items    物资账本 —— 撰稿端只能用账本内的物资，已耗尽/已丢失的不许再用
+    #   settings 设定档案 —— 已确立的地点/设施/世界规则，是判断"与前文是否一致"的依据
     memory: Dict[str, Any]
 
     # —— 累积记忆 ——
