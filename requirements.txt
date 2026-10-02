@@ -1,0 +1,12 @@
+# 运行时依赖（网页端与 CLI 共用；start.bat 也读这个文件安装）
+langgraph>=0.2
+openai>=1.30
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
+
+# 开发 / 测试依赖（只跑 tests/ 时需要，不影响程序运行）
+pytest>=8.0
+
+# 精确版本（含全部传递依赖）见 requirements.lock.txt，
+# 想完全复现环境就用它：pip install -r requirements.lock.txt

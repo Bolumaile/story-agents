@@ -1,0 +1,13 @@
+# 本文件只放「工具配置」，依赖清单以 requirements.txt 为准（start.bat 也用它安装）。
+# 之所以不在这里声明 [project].dependencies：本项目是平铺模块结构
+# （config.py / llm.py / nodes.py 直接躺在根目录），做成可安装包需要额外维护
+# py-modules 列表，对单人本地工具是纯粹的负担。
+#
+# 精确版本见 requirements.lock.txt（由 pip freeze 生成，用于完全复现环境）。
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+# 测试全部离线：MockLLM 不联网，JSON 修复链是纯字符串处理。
+# 若哪天有用例开始联网，说明 Mock 分支被绕过了，应当在评审时拦下。

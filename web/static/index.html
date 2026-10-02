@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小说多 Agent 创作工坊</title>
+<link rel="stylesheet" href="/static/fonts/fonts.css">
+<style>
+/* 字体换血记录（2026-09-30）：
+   原「印品鸿蒙体」为非商用授权艺术字体，已不再引用；字体文件仍保留在
+   web/static/fonts/yinpin-hongmengti.ttf，想换回就恢复下面的 @font-face 与 --font-ui。
+   现用 Google Fonts 的思源系列（SIL OFL 授权，可商用），已本地化到 fonts/ 下。 */
+:root{
+  --bg:#f6f4ef; --panel:#fffdf8; --ink:#2b2620; --sub:#6f675c; --line:#e3ddd2;
+  --accent:#8a5a2b; --accent-soft:#f0e6d8; --ok:#3a7d44; --warn:#b3541e; --bad:#a03028;
+  /* 思源宋体：页面标题、板块标题、小说正文——书卷感强 */
+  --font-serif:"Noto Serif SC","Noto Serif","Source Han Serif SC","宋体",serif;
+  /* 思源黑体：表单、标签、按钮等密集交互区——小字更清晰 */
+  --font-sans:"Noto Sans SC","Noto Sans",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+  --font-mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+  --font-ui:var(--font-serif);
+  /* 字号梯度：基础 16 / 正文 17 / 标签 14 / 小字 13.5 */
+  --fs-base:16px; --fs-body:17px; --fs-small:13.5px; --fs-label:14px;
+}
+/* 需要切回印品鸿蒙体时，取消注释并把 --font-ui 改成 var(--font-art)：
+@font-face{font-family:"Yinpin Hongmengti";
+  src:url("/static/fonts/yinpin-hongmengti.ttf") format("truetype");font-display:swap}
+*/
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);
+  font-size:var(--fs-base);line-height:1.6;padding:28px 16px}
+.wrap{max-width:940px;margin:0 auto}
+h1{font-size:26px;font-weight:600;letter-spacing:2px;margin-bottom:6px}
+.sub{color:var(--sub);font-size:var(--fs-label);margin-bottom:16px;line-height:1.6}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin-bottom:16px}
+.card summary{cursor:pointer;font-size:16.5px;font-weight:500;letter-spacing:1px;
+  padding-left:10px;border-left:3px solid var(--accent);user-select:none}
+.card summary .tag{font-size:12.5px;color:var(--sub);font-weight:400;margin-left:8px}
+.card[open] summary{margin-bottom:14px}
+label{display:block;font-size:var(--fs-label);color:var(--sub);margin:10px 0 4px;line-height:1.5}
+input[type=text],input[type=number],input[type=password],textarea,select{
+  width:100%;border:1px solid var(--line);border-radius:6px;background:#fff;
+  padding:8px 10px;font-size:15px;font-family:var(--font-sans);font-weight:400;
+  color:var(--ink);line-height:1.5}
+select{cursor:pointer}
+textarea{resize:vertical;min-height:64px}
+textarea.big{min-height:96px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 16px}
+@media(max-width:640px){.grid2,.grid3{grid-template-columns:1fr}}
+.char-card{border:1px dashed var(--line);border-radius:8px;padding:12px 16px;margin-bottom:14px;background:#fffef9}
+.char-card .head{display:flex;justify-content:space-between;align-items:center}
+.char-card .head b{font-size:14px}
+button{font-family:var(--font-sans);cursor:pointer;border-radius:6px;border:1px solid var(--accent);
+  background:var(--accent);color:#fff;padding:8px 18px;font-size:14px;letter-spacing:.6px}
+button:hover{filter:brightness(1.08)}
+button.ghost{background:transparent;color:var(--accent)}
+button.mini{padding:2px 10px;font-size:12px;border-color:var(--line);color:var(--sub);background:#fff}
+button.ico{padding:1px 8px;font-size:13px;line-height:1.5;border-color:var(--line);
+  color:var(--accent);background:#fff;letter-spacing:0}
+button.ico:hover{border-color:var(--accent);background:var(--accent-soft)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.hint{font-size:var(--fs-small);color:var(--sub);line-height:1.5}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:12.5px;border:1px solid var(--line);background:#fff;color:var(--sub);
+  border-radius:999px;padding:3px 11px;cursor:pointer;letter-spacing:0;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.row-head{display:flex;align-items:center;gap:8px;margin:12px 0 0}
+.row-head .rl{font-size:13px;color:var(--sub);margin:0}
+.runrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.runrow>div{flex:1;min-width:150px}
+.secbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px;
+  padding-top:12px;border-top:1px dashed var(--line)}
+#board .flow{font-size:14px;margin-bottom:8px;min-height:24px}
+#board .flow b{color:var(--accent)}
+.step{padding:6px 10px;border-left:2px solid var(--line);margin-left:6px;color:var(--sub);
+  font-size:var(--fs-small);line-height:1.6}
+.step.on{border-color:var(--accent);color:var(--ink)}
+/* 流式生成进度：挂在当前进行中的那一行末尾，随字数实时刷新 */
+.prog{display:inline-block;margin-left:8px;padding:1px 9px;border-radius:999px;
+  font-size:12px;background:var(--accent-soft);color:var(--accent)}
+.prog.think{background:#efece5;color:var(--sub)}
+.step.ok{border-color:var(--ok);color:var(--ok)}
+.step.bad{border-color:var(--bad);color:var(--bad)}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.cmt{background:#fdf3ef;border:1px solid #eed6cc;border-radius:6px;padding:7px 10px;margin:6px 0;font-size:12px;color:#7a4030}
+.cmt.minor{background:#fbf6ea;border-color:#ead9b8;color:#7c6428}
+.cmt.reader{background:#eef3f7;border-color:#cfdae3;color:#3d566e}
+.chapter{margin-top:14px;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}
+.chapter>summary{cursor:pointer;padding:10px 14px;font-size:14px;user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chapter>summary b{color:var(--accent)}
+.badge{font-size:11px;border-radius:4px;padding:1px 8px}
+.badge.ok{background:#e6f2e8;color:var(--ok)}
+.badge.warn{background:#f6e8dc;color:var(--warn)}
+.badge.mock{background:#fdf0ee;color:#8e2b23;border:1px solid #eebfb6}
+.chapter .body{padding:6px 16px 16px}
+.chapter pre{white-space:pre-wrap;font-family:var(--font-serif);font-size:var(--fs-body);
+  font-weight:400;line-height:1.85;letter-spacing:.2px;margin-top:8px}
+#memoryBox{font-family:var(--font-mono);font-size:12.5px;min-height:180px;line-height:1.6}
+.primary-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 10px}
+.primary-row .grow{flex:1}
+.eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;
+  color:var(--sub);cursor:pointer;font-size:13px;padding:2px}
+.pw-wrap{position:relative}
+.notice{background:#fbf6ea;border:1px solid #ead9b8;border-radius:8px;
+  padding:10px 14px;font-size:13px;color:#7c6428;margin-bottom:16px;line-height:1.8}
+#mockWarn{background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;padding:10px 14px;
+  font-size:13px;color:#8e2b23;margin-bottom:16px;line-height:1.8}
+#toasts{position:fixed;left:50%;transform:translateX(-50%);top:14px;z-index:99;
+  display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;max-width:90vw}
+#toasts .t{background:#2b2620;color:#fff;border-radius:8px;padding:9px 18px;font-size:13px;
+  box-shadow:0 4px 16px rgba(0,0,0,.18)}
+#toasts .t.err{background:#8e2b23}
+#toasts .t.ok{background:#2f6a3a}
+#jsState{font-size:12px;border-radius:8px;padding:7px 12px;margin-bottom:14px;line-height:1.6}
+#jsState.off{background:#fdf0ee;border:1px solid #eebfb6;color:#8e2b23;font-weight:bold}
+#jsState.on{background:#eef6ef;border:1px solid #cfe3d2;color:#2f6a3a}
+#confirmBar{display:none;background:#fbf6ea;border:1px solid #ead9b8;border-radius:8px;
+  padding:10px 14px;font-size:13px;color:#7c6428;margin-bottom:14px;align-items:center;
+  gap:12px;flex-wrap:wrap}
+#errBox{display:none;background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;
+  padding:10px 14px;font-size:12px;color:#8e2b23;margin-bottom:14px;
+  font-family:Consolas,monospace;white-space:pre-wrap;line-height:1.7}
+.resolved{font-size:12px;color:var(--sub);margin-top:6px}
+.resolved b{color:var(--accent)}
+/* 界面小字统一走思源黑体：小字号下比宋体清晰得多。
+   小说正文（.chapter pre）、页面标题、板块标题仍用思源宋体，保留书卷感。 */
+.sub,label,.hint,.resolved,.chip,.step,.cmt,.badge,.notice,#mockWarn,#jsState,
+#confirmBar,#toasts .t,#board .flow,.card summary .tag,.pick-btn,.picker .pi,
+.picker .ph,#connBox,.runrow,.secbar,button{font-family:var(--font-sans)}
+#connBox code,.errmsg,#errBox,.picker .pi b{font-family:var(--font-mono)}
+/* 模型版本选择器 */
+.pick-wrap{position:relative;display:flex;gap:6px}
+.pick-wrap input{flex:1;min-width:0}
+.pick-btn{flex:0 0 36px;border:1px solid var(--line);background:#fff;border-radius:8px;
+  cursor:pointer;font-size:13px;color:var(--sub)}
+.pick-btn:hover{border-color:var(--accent);color:var(--accent)}
+.picker{display:none;position:absolute;z-index:40;top:calc(100% + 4px);left:0;right:0;
+  max-height:270px;overflow:auto;background:#fff;border:1px solid var(--line);
+  border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.13);padding:5px}
+.picker.show{display:block}
+.picker .pi{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12.5px;line-height:1.45}
+.picker .pi:hover{background:var(--accent-soft)}
+.picker .pi b{font-family:Consolas,monospace;font-size:12.5px;color:var(--ink)}
+.picker .pi span{display:block;color:var(--sub);font-size:11.5px}
+.picker .pi.cur{background:var(--accent-soft)}
+.picker .pi .ftbadge{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;
+  font-style:normal;font-size:10.5px;background:#fdf0ee;color:#8e2b23;border:1px solid #eebfb6}
+.picker .ph{padding:9px 10px;color:var(--sub);font-size:12px;line-height:1.7}
+.conn-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.errmsg{font-family:Consolas,monospace;font-size:12.5px;line-height:1.7;margin-top:4px;
+  white-space:pre-wrap}
+#connBox{display:none;margin-top:10px;border-radius:10px;padding:11px 14px;
+  font-size:12.5px;line-height:1.85}
+#connBox.ok{background:#eef6ef;border:1px solid #cfe3d2;color:#245a30}
+#connBox.bad{background:#fdf0ee;border:1px solid #eebfb6;color:#8e2b23}
+#connBox.pending{background:#fbf6ea;border:1px solid #ead9b8;color:#7c6428}
+#connBox code{font-family:Consolas,monospace;background:rgba(0,0,0,.06);
+  padding:1px 5px;border-radius:4px}
+#connBox .mini-list{margin-top:8px;max-height:160px;overflow:auto}
+#connBox .mini-list span{display:inline-block;background:rgba(0,0,0,.06);border-radius:5px;
+  padding:2px 8px;margin:2px 5px 2px 0;cursor:pointer;font-family:Consolas,monospace;font-size:11.5px}
+#connBox .mini-list span:hover{background:var(--accent);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>小说多 Agent 创作工坊</h1>
+  <div class="sub">策划 → 撰稿 → 校对（可打回重写，上限 3 轮）→ 润色 → 记忆结算 · 多平台模型 · LangGraph 流水线</div>
+
+  <div id="jsState" class="off">⚠ 页面脚本尚未运行 —— 若此处持续为红色，说明当前预览面板禁用了 JavaScript，
+    请用 Chrome / Edge 直接打开 <b>http://127.0.0.1:8765</b>（按钮才会有反应）。</div>
+  <div id="errBox"></div>
+  <div id="confirmBar">
+    <span id="confirmText"></span>
+    <button type="button" class="mini" id="confirmYes">确定</button>
+    <button type="button" class="mini" id="confirmNo">取消</button>
+  </div>
+
+  <div id="restoreBar" style="display:none;background:#eef6ef;border:1px solid #cfe3d2;color:#245a30;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.75"></div>
+
+  <div class="toolbar">
+    <button type="button" class="mini" onclick="fillDemo()">填充示例</button>
+    <button type="button" class="mini" onclick="saveProject()">保存项目</button>
+    <button type="button" class="mini" onclick="document.getElementById('loadFile').click()">加载项目</button>
+    <button type="button" class="mini" onclick="resetForm()">重置表单</button>
+    <button type="button" class="mini" onclick="newStory()" title="清空当前会话与页面内容，开始写一篇新的">新建故事</button>
+    <input type="file" id="loadFile" accept=".json" style="display:none" onchange="loadProject(this)">
+  </div>
+
+  <!-- 核心需求 -->
+  <details class="card" open>
+    <summary>核心需求 <span class="tag">题材、基调、篇幅、核心看点</span></summary>
+    <textarea id="requirement" class="big" placeholder="一段话说清你要的故事，只言片语也行，后面可以点「AI 润色需求」扩写。"></textarea>
+    <div class="row-head">
+      <span class="rl">示例题材（点 ⟳ 换一批）</span>
+      <button type="button" class="ico" onclick="shuffle('req')" title="换一批">⟳</button>
+    </div>
+    <div class="chips" id="chips-req" data-target="#requirement" data-mode="set" data-n="6"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="ghost" id="polishBtn" onclick="polishReq()">AI 润色需求</button>
+      <button type="button" class="mini" id="revertBtn" style="display:none" onclick="revertReq()">还原</button>
+      <span class="hint" id="polishHint">只言片语也能扩成完整需求，润色后可还原</span>
+    </div>
+  </details>
+
+  <!-- 人物卡 -->
+  <details class="card" open>
+    <summary>人物卡 <span class="tag">可自己填，也可交给策划 Agent 自动生成</span></summary>
+    <label style="margin-top:0"><input type="checkbox" id="autoChars" style="width:auto;margin-right:6px"
+      onchange="onAutoCharsChange()">由策划 Agent 自动设计人物（勾选后本节内容不参与生成）</label>
+    <div id="charArea">
+      <div id="chars"></div>
+      <button type="button" class="ghost mini" onclick="addChar()">＋ 添加人物</button>
+    </div>
+    <div class="secbar">
+      <button type="button" class="ghost mini" id="fill-characters" onclick="aiFill('characters',false)">AI 补全人物卡</button>
+      <button type="button" class="ghost mini" id="fill-characters-ov" onclick="aiFill('characters',true)">AI 重写人物卡</button>
+      <span class="hint" id="fillHint-characters">补全只填空缺，重写会覆盖你已填内容</span>
+    </div>
+  </details>
+
+  <!-- 世界观 + 目标 -->
+  <details class="card" open>
+    <summary>世界观与故事目标</summary>
+    <div class="row-head"><span class="rl">时代与环境</span>
+      <button type="button" class="ico" onclick="shuffle('era')" title="换一批">⟳</button></div>
+    <input type="text" id="world_era" list="dl-era" placeholder="例：南方水乡小镇">
+    <div class="chips" id="chips-era" data-target="#world_era" data-mode="set" data-n="4"></div>
+
+    <div class="row-head"><span class="rl">世界 / 力量规则</span>
+      <button type="button" class="ico" onclick="shuffle('rules')" title="换一批">⟳</button></div>
+    <input type="text" id="world_rules" list="dl-rules" placeholder="例：现实向，无超自然">
+    <div class="chips" id="chips-rules" data-target="#world_rules" data-mode="set" data-n="4"></div>
+
+    <div class="row-head"><span class="rl">关键地点与物品</span>
+      <button type="button" class="ico" onclick="shuffle('locations')" title="换一批">⟳</button></div>
+    <input type="text" id="world_locations" list="dl-locations" placeholder="例：老堤防、半页笔记">
+    <div class="chips" id="chips-locations" data-target="#world_locations" data-mode="set" data-n="4"></div>
+
+    <div class="grid2" style="margin-top:6px">
+      <div>
+        <div class="row-head"><span class="rl">主角目标</span>
+          <button type="button" class="ico" onclick="shuffle('goal')" title="换一批">⟳</button></div>
+        <input type="text" id="goal" list="dl-goal" placeholder="例：查清父亲失踪的真相">
+        <div class="chips" id="chips-goal" data-target="#goal" data-mode="set" data-n="3"></div>
+      </div>
+      <div>
+        <div class="row-head"><span class="rl">核心冲突</span>
+          <button type="button" class="ico" onclick="shuffle('conflict')" title="换一批">⟳</button></div>
+        <input type="text" id="conflict" list="dl-conflict" placeholder="例：真相与安全的取舍">
+        <div class="chips" id="chips-conflict" data-target="#conflict" data-mode="set" data-n="3"></div>
+      </div>
+    </div>
+    <div class="secbar">
+      <button type="button" class="ghost mini" id="fill-world" onclick="aiFill('world',false)">AI 补全世界观与目标</button>
+      <button type="button" class="ghost mini" id="fill-world-ov" onclick="aiFill('world',true)">AI 重写</button>
+      <span class="hint" id="fillHint-world">补全只填空缺，重写会覆盖你已填内容</span>
+    </div>
+  </details>
+
+  <!-- 进阶选项 -->
+  <details class="card">
+    <summary>进阶选项 <span class="tag">可选：文风 / 字数 / 伏笔 / 悬念 / 禁止内容</span></summary>
+    <div class="row-head"><span class="rl">文风参考片段（只模仿语气节奏，不抄原句）</span></div>
+    <textarea id="style_sample" placeholder="贴一段你喜欢的文风，或点下方「AI 补全」自动写一段样例……"></textarea>
+
+    <div class="grid3" style="margin-top:4px">
+      <div><label>每章字数</label><input type="number" id="word_count" placeholder="例：3000"></div>
+      <div>
+        <div class="row-head"><span class="rl">每章必须埋的伏笔</span>
+          <button type="button" class="ico" onclick="shuffle('foreshadow')" title="换一批">⟳</button></div>
+        <input type="text" id="foreshadow" list="dl-foreshadow">
+        <div class="chips" id="chips-foreshadow" data-target="#foreshadow" data-mode="set" data-n="3"></div>
+      </div>
+      <div>
+        <div class="row-head"><span class="rl">结尾悬念要求</span>
+          <button type="button" class="ico" onclick="shuffle('cliffhanger')" title="换一批">⟳</button></div>
+        <input type="text" id="cliffhanger" list="dl-cliffhanger">
+        <div class="chips" id="chips-cliffhanger" data-target="#cliffhanger" data-mode="set" data-n="3"></div>
+      </div>
+    </div>
+
+    <div class="row-head"><span class="rl">禁止内容（一行一条，点选即追加）</span>
+      <button type="button" class="ico" onclick="shuffle('forbidden')" title="换一批">⟳</button></div>
+    <textarea id="forbidden" placeholder="例：&#10;主角不得使用枪械"></textarea>
+    <div class="chips" id="chips-forbidden" data-target="#forbidden" data-mode="line" data-n="6"></div>
+
+    <div style="margin-top:14px">
+      <div class="row-head"><span class="rl">角色禁忌 / OOC 红线（点选即追加到每个人物卡）</span>
+        <button type="button" class="ico" onclick="shuffle('taboo')" title="换一批">⟳</button></div>
+      <div class="chips" id="chips-taboo" data-target="" data-mode="line" data-n="6"></div>
+    </div>
+
+    <div class="secbar">
+      <button type="button" class="ghost mini" id="fill-advanced" onclick="aiFill('advanced',false)">AI 补全进阶选项</button>
+      <button type="button" class="ghost mini" id="fill-advanced-ov" onclick="aiFill('advanced',true)">AI 重写</button>
+      <span class="hint" id="fillHint-advanced">补全只填空缺，重写会覆盖你已填内容</span>
+    </div>
+  </details>
+
+  <!-- 运行设置 -->
+  <details class="card" open>
+    <summary>运行设置 <span class="tag">平台 / 模型 / Mock</span></summary>
+    <label style="margin-top:0">API 平台（选平台名即可，接口地址与模型名已内置）</label>
+    <select id="provider" onchange="onProviderChange()"></select>
+    <div class="resolved" id="resolvedInfo"></div>
+    <div class="runrow" style="margin-top:10px">
+      <div><label>本次生成章节数（上限 5）</label><input type="number" id="chapters" value="3" min="1" max="5"></div>
+      <div style="flex:2"><label>API Key（本地模型可不填）</label>
+        <div class="pw-wrap"><input type="password" id="api_key" placeholder="sk-...">
+        <button type="button" class="eye" onclick="togglePw(this)">显示</button></div>
+        <label class="hint" style="margin-top:5px;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="rememberKey" style="width:auto">
+          <span>记住在本机（存本机浏览器，不清缓存就一直在；公用电脑请取消勾选）</span></label>
+      </div>
+    </div>
+    <div class="runrow" style="margin-top:6px">
+      <div style="flex:2"><label>Base URL</label><input type="text" id="base_url" placeholder="选平台后自动填入"></div>
+      <div style="flex:1.5">
+        <label>模型名 / 版本（点 ▾ 挑版本，也可自己填任意模型名）</label>
+        <div class="pick-wrap">
+          <input type="text" id="model" placeholder="选平台后自动填入" autocomplete="off">
+          <button type="button" class="pick-btn" onclick="toggleModelPicker(event)"
+            title="展开该平台的模型版本清单">▾</button>
+          <div class="picker" id="modelPicker"></div>
+        </div>
+      </div>
+    </div>
+    <div class="conn-row">
+      <button type="button" class="ghost mini" id="testBtn" onclick="testConnection()">测试连接</button>
+      <span class="hint" id="connHint">真实发一次最小请求，验证 Key / 地址 / 模型名是否都对</span>
+    </div>
+    <div id="connBox"></div>
+    <label style="margin-top:10px"><input type="checkbox" id="mock" style="width:auto;margin-right:6px"
+      onchange="onMockChange()">Mock 模式（不调用模型，用固定示例文本验证流水线流转；润色与读者反馈也会走 mock）</label>
+    <label><input type="checkbox" id="thinking" style="width:auto;margin-right:6px">
+      深度思考模式（让模型先推理再作答：更细但<b>慢数倍</b>，
+      写小说/剧本<b>建议保持关闭</b>）</label>
+    <div class="hint" style="margin:-2px 0 0 22px;line-height:1.75">
+      DeepSeek V4 与智谱 GLM 都是<b>默认开启思考</b>的，本开关关闭时会显式下发关闭指令。<br>
+      例外：智谱 <code>glm-5.3</code>／<code>glm-5.3-flash</code>／<code>glm-4.7</code>
+      属于<b>强制思考</b>模型，关不掉——它们本身就慢，想快请换 <code>glm-5.2</code>／<code>glm-5.1</code>。
+    </div>
+    <div id="mockWarn" style="display:none">
+      <b>⚠ 当前是 Mock 模式，不是真实创作。</b><br>
+      Mock 模式不调用任何模型，所有章节都返回预先写死的示例文本——所以你每次看到的都是同一句话
+      （例如「雨还在下。林岸握着门把手……」）。<br>
+      <b>想看真实创作结果，请取消勾选这一项，并在上方填入 API Key（并选好平台）。</b><br>
+      若你只是想知道"每次都是同一句"有没有坏，那没有坏：这正是 Mock 模式的预期行为。
+    </div>
+  </details>
+
+  <!-- 主控制 -->
+  <div class="primary-row">
+    <button id="genBtn" onclick="generate('new')">开始创作</button>
+    <button id="contBtn" class="ghost" onclick="generate('continue')" disabled>续写下一章</button>
+    <button id="previewBtn" class="ghost" onclick="previewOutline()">只预览大纲</button>
+    <span class="grow"></span>
+    <button type="button" class="mini" id="unlockBtn" style="display:none" onclick="setFormLocked(false)">解锁表单</button>
+  </div>
+  <div class="notice">
+    <b>⚠️ 续写模式说明：</b><br>
+    续写不会重新执行策划 Agent，修改上方【人物卡】等表单仅为页面展示，不会影响后续生成。<br>
+    如需微调设定，请编辑下方【全局记忆库】（保存后续写时生效）；<br>
+    如需大幅度修改人设 / 世界观 / 核心冲突，建议新建项目重新策划——记忆库仅适合细节微调，大幅修改会造成前后剧情冲突。
+  </div>
+
+  <!-- 流水线看板 -->
+  <details class="card" id="board" open style="display:none">
+    <summary>流水线实时看板</summary>
+    <div class="flow" id="flowNow"></div>
+    <div id="progress"></div>
+  </details>
+
+  <!-- 全局记忆库 -->
+  <details class="card" id="memoryCard" style="display:none">
+    <summary>全局记忆库 <span class="tag">章节摘要 / 伏笔池 / 人物快照 — 可直接编辑，续写时生效</span></summary>
+    <textarea id="memoryBox" spellcheck="false"></textarea>
+    <div class="chips"><button type="button" class="mini" onclick="applyMemoryEdit()">保存记忆修改（用于续写）</button>
+      <span class="hint" id="memoryHint"></span></div>
+  </details>
+
+  <!-- 结果 -->
+  <details class="card" id="resultCard" style="display:none">
+    <summary>创作结果 <span class="tag" id="resultTag"></span></summary>
+    <div class="runrow" style="margin-bottom:10px">
+      <button type="button" class="mini" onclick="showOutline()">查看大纲</button>
+      <button type="button" class="mini" onclick="downloadMd()">导出全书 Markdown</button>
+      <span class="hint" id="outDirHint"></span>
+    </div>
+    <div id="outlinePanel" style="display:none"><pre id="outlinePre" style="white-space:pre-wrap;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px"></pre></div>
+    <div id="result"></div>
+  </details>
+</div>
+
+<script>
+/* ───────── 运行时自检 + 页内提示 ───────── */
+(function(){
+  const s=document.getElementById('jsState');
+  if(s){s.className='on';s.textContent='✓ 页面脚本已就绪，按钮可正常使用（服务 127.0.0.1:8765 已连接）';}
+})();
+function showErr(msg){
+  const b=document.getElementById('errBox');if(!b)return;
+  b.style.display='';b.textContent='页面脚本报错（请把这段发给开发者）：\n'+msg;
+}
+window.addEventListener('error',e=>showErr((e.message||'未知错误')+'  @'+(e.filename||'')+':'+(e.lineno||'')));
+window.addEventListener('unhandledrejection',e=>showErr('异步错误：'+(e.reason&&e.reason.message||e.reason)));
+function toast(msg,type){
+  let box=document.getElementById('toasts');
+  if(!box){box=document.createElement('div');box.id='toasts';document.body.appendChild(box);}
+  const d=document.createElement('div');d.className='t'+(type?' '+type:'');d.textContent=msg;
+  box.appendChild(d);
+  setTimeout(()=>{d.style.transition='opacity .3s';d.style.opacity='0';
+    setTimeout(()=>d.remove(),320);},type==='err'?4200:2400);
+}
+function askConfirm(text,onYes){
+  const bar=document.getElementById('confirmBar');
+  if(!bar){if(window.confirm(text))onYes();return;}
+  document.getElementById('confirmText').textContent=text;
+  bar.style.display='flex';
+  const yes=document.getElementById('confirmYes'),no=document.getElementById('confirmNo');
+  const close=()=>{bar.style.display='none';yes.onclick=null;no.onclick=null;};
+  yes.onclick=()=>{close();onYes();};no.onclick=close;
+}
+
+/* ───────── 本机记忆：API 配置 + 表单草稿 + 上次创作进度 ─────────
+   为什么要有这个：
+   ① 以前每关一次页面，API 平台 / 地址 / 模型 / Key 全部清空，重开就得再输一遍；
+   ② 表单填到一半关掉，人物卡、世界观全部消失，等于白填；
+   ③ 写完几章关掉，连「续写」的入口都没了。
+   现在分两处保存：
+   - 本浏览器 localStorage：API 配置（可选是否记 Key）+ 创作表单草稿 → 刷新即恢复；
+   - 服务端 outputs_web/_session.json：策划案 + 记忆库 + 已定稿章节 → 关服务也不丢。
+   全部用 try 包住：某些嵌入式预览面板会禁用 localStorage，那时只是不记住，不影响使用。 */
+const K_LLM='storyagents.llm.v1';    // API 平台 / 地址 / 模型 / Key
+const K_FORM='storyagents.form.v1';  // 创作表单草稿
+function lsGet(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+function lsDel(k){try{localStorage.removeItem(k);}catch(e){}}
+
+const LLM_FIELDS=['provider','base_url','model','api_key','rememberKey','thinking'];
+function saveLlm(){
+  const remember=document.getElementById('rememberKey').checked;
+  return lsSet(K_LLM,{
+    provider:document.getElementById('provider').value,
+    base_url:val('base_url'),model:val('model'),
+    api_key:remember?document.getElementById('api_key').value:'',   // 不勾选就不落盘
+    remember:remember,
+    thinking:document.getElementById('thinking').checked
+  });
+}
+function loadLlm(){
+  const d=lsGet(K_LLM,null);if(!d)return false;
+  if(d.provider!==undefined&&d.provider!==null)document.getElementById('provider').value=d.provider;
+  onProviderChange(true);                       // 先按平台带出默认地址与模型
+  if(d.base_url)document.getElementById('base_url').value=d.base_url;  // 再用上次保存的覆盖
+  if(d.model)document.getElementById('model').value=d.model;
+  document.getElementById('rememberKey').checked=d.remember!==false;
+  document.getElementById('api_key').value=(d.remember!==false&&d.api_key)?d.api_key:'';
+  document.getElementById('thinking').checked=!!d.thinking;
+  onProviderChange(true);                       // 重新同步只读状态与说明文字
+  if(d.base_url)document.getElementById('base_url').value=d.base_url;
+  if(d.model)document.getElementById('model').value=d.model;
+  syncProviderFromValues();
+  return true;
+}
+function saveDraft(){
+  const d=collectForm();
+  // API 三件套走 K_LLM，不进草稿（草稿可能被"保存项目"导出，Key 不该混进去）
+  delete d.api_key;delete d.base_url;delete d.model;delete d.mock;
+  d.autoChars=document.getElementById('autoChars').checked;
+  return lsSet(K_FORM,d);
+}
+function loadDraft(){
+  const d=lsGet(K_FORM,null);if(!d)return false;
+  fillForm(d);
+  return true;
+}
+
+/* 自动保存：任何输入都排队存一次（防抖，避免每敲一个字都写盘） */
+let draftTimer=null,llmTimer=null,hasSession=false;
+function scheduleDraft(){clearTimeout(draftTimer);draftTimer=setTimeout(()=>{try{saveDraft();}catch(e){}},700);}
+function scheduleLlm(){clearTimeout(llmTimer);llmTimer=setTimeout(()=>{try{saveLlm();}catch(e){}},400);}
+function autoSave(e){
+  const t=e.target;if(!t||!t.id&&!t.closest)return;
+  if(t.id&&LLM_FIELDS.includes(t.id)){scheduleLlm();return;}
+  if(t.id==='mock'||t.id==='chapters')return;      // Mock 与章节数属于"本次运行"设置，不记
+  scheduleDraft();
+}
+
+/* ───────── 恢复上次创作进度（服务端存档）───────── */
+async function restoreSession(){
+  let d=null;
+  try{const r=await fetch('/api/session');if(r.ok)d=await r.json();}catch(e){return;}
+  if(!d||!d.has_session)return;
+  hasSession=true;
+  runData.outline=d.outline||null;
+  runData.memory=d.memory||null;
+  runData.chapters=(d.chapters||[]).map(c=>({index:c.index,title:c.title||'',
+    text:c.text||'',rounds:c.rounds||0,mock:false,comments:[]}));
+
+  if(d.memory&&Object.keys(d.memory).length){
+    document.getElementById('memoryCard').style.display='';
+    document.getElementById('memoryBox').value=JSON.stringify(d.memory,null,2);
+  }
+  if(d.out_dir)document.getElementById('outDirHint').textContent='产物目录：'+d.out_dir;
+
+  if(runData.chapters.length){
+    const R2=document.getElementById('result');
+    R2.innerHTML='';
+    runData.chapters.forEach(renderChapter);
+    document.getElementById('resultTag').textContent='已定稿 '+runData.chapters.length+' 章';
+    document.getElementById('resultCard').style.display='';
+    document.getElementById('contBtn').disabled=false;
+  }
+  const title=(d.outline&&d.outline.title)?('《'+esc(d.outline.title)+'》'):'（未命名）';
+  const bar=document.getElementById('restoreBar');
+  bar.style.display='';
+  bar.innerHTML=
+    '<b>已恢复上次创作进度</b>：'+title+'，共 '+runData.chapters.length+' 章'
+    +(d.saved_at?('　<em style="font-style:normal;opacity:.75">存档于 '+esc(d.saved_at)+'</em>'):'')
+    +'<br>直接点「<b>续写下一章</b>」接着写（复用策划案与记忆库，不会重跑策划）；'
+    +'想写全新的一篇，点上方「<b>新建故事</b>」。';
+  if(runData.chapters.length)toast('已恢复上次进度：'+runData.chapters.length+' 章','ok');
+}
+
+/* ───────── 新建故事：清空会话 ───────── */
+function newStory(){
+  askConfirm('开始一个新故事？\n\n本页已有的章节、大纲与记忆库会被清空，之后无法再「续写」这一篇。\n'
+    +'（已经写好的 md / json 文件仍保存在 outputs_web 里，不会被删除。）',async()=>{
+    try{await fetch('/api/session/clear',{method:'POST'});}catch(e){}
+    hasSession=false;
+    runData={outline:null,chapters:[],memory:null,mock:false};
+    document.getElementById('result').innerHTML='';
+    document.getElementById('resultTag').textContent='';
+    document.getElementById('resultCard').style.display='none';
+    document.getElementById('memoryCard').style.display='none';
+    document.getElementById('memoryBox').value='';
+    document.getElementById('memoryHint').textContent='';
+    document.getElementById('outlinePanel').style.display='none';
+    document.getElementById('outDirHint').textContent='';
+    document.getElementById('restoreBar').style.display='none';
+    document.getElementById('contBtn').disabled=true;
+    const P2=document.getElementById('progress'),F2=document.getElementById('flowNow');
+    if(P2)P2.innerHTML='';if(F2)F2.innerHTML='';cur=null;
+    document.getElementById('board').style.display='none';
+    setFormLocked(false);
+    toast('已清空会话，可以开始新故事了','ok');
+  });
+}
+
+/* ───────── 平台内置（显示平台名，地址与模型版本自动带出）─────────
+   models：[模型ID, 一句话说明]；第一项为该平台推荐默认。
+   清单核对时间 2026-09-30，平台随时可能上下架 → 以测试连接结果 & 控制台为准。 */
+const PROVIDERS=[
+  {id:'',name:'— 请选择平台 —',url:'',model:'',models:[]},
+  {id:'deepseek',name:'DeepSeek 官方',url:'',model:'deepseek-v4-flash',
+   note:'留空即走官方默认地址 https://api.deepseek.com',
+   models:[
+     ['deepseek-v4-flash','V4 快速版 · 1M 上下文 · 便宜，日常首选'],
+     ['deepseek-v4-pro','V4 专业版 · 1M 上下文 · 更强，约 3 倍价格'],
+   ]},
+  {id:'zhipu',name:'智谱 GLM',url:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3',
+   models:[
+     ['glm-5.3','最新旗舰 · 1M 上下文 · 复杂推理与 Agent'],
+     ['glm-5.3-flash','轻量快速版 · 成本低'],
+     ['glm-5.2','上一代旗舰'],
+     ['glm-5.1','面向智能体 / 编程'],
+     ['glm-5-turbo','GLM-5 高速版'],
+     ['glm-5','GLM-5 基础版'],
+     ['glm-4.7','交错思考 · Agent 能力强'],
+     ['glm-4.7-flash','4.7 轻量版'],
+     ['glm-4.6','上一代主力'],
+     ['glm-4.5-air','更早的轻量版'],
+   ]},
+  {id:'dashscope',name:'阿里百炼 DashScope',url:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen3.7-plus',
+   models:[
+     ['qwen3.7-plus','官方推荐 · 质量/速度/成本均衡'],
+     ['qwen3.8-max','旗舰 · 复杂推理与编程'],
+     ['qwen3.8-flash','最新快速版 · 高性价比'],
+     ['qwen3.7-max','上一代旗舰'],
+     ['qwen3.6-plus',''],
+     ['qwen3.7-flash',''],
+     ['qwen-plus','长期可用的稳定别名'],
+     ['qwen-long','超长文本'],
+     ['deepseek-v3.2','百炼上托管的第三方模型'],
+   ]},
+  {id:'siliconflow',name:'硅基流动',url:'https://api.siliconflow.cn/v1',model:'deepseek-ai/DeepSeek-V4-Flash',
+   note:'模型名请在硅基流动「模型广场」用复制按钮取准确 ID（此处为常见写法）',
+   models:[
+     ['deepseek-ai/DeepSeek-V4-Flash','性价比高 · 1M 上下文'],
+     ['deepseek-ai/DeepSeek-V4-Pro','更强 · 1M 上下文'],
+     ['deepseek-ai/DeepSeek-V3.2','上一代旗舰'],
+     ['deepseek-ai/DeepSeek-R1','推理模型'],
+     ['zai-org/GLM-5.1','智谱 GLM'],
+     ['moonshotai/Kimi-K2.6','Kimi 长文本'],
+     ['MiniMaxAI/MiniMax-M2.5','MiniMax'],
+     ['Qwen/Qwen3.5-397B-A17B','通义千问开源版'],
+   ]},
+  {id:'moonshot',name:'月之暗面 Kimi',url:'https://api.moonshot.cn/v1',model:'kimi-k3',
+   models:[
+     ['kimi-k3','最新旗舰 · 1M 上下文 · 原生视觉'],
+     ['kimi-k2.6','通用主力 · 256K'],
+     ['kimi-k2.7-code','编程专用 · 256K'],
+     ['kimi-k2.7-code-highspeed','编程高速版'],
+   ]},
+  {id:'ark',name:'火山方舟 豆包',url:'https://ark.cn-beijing.volces.com/api/v3',model:'doubao-seed-2-1-pro-260915',
+   note:'方舟的模型 ID 带日期版本号；若走推理接入点，请填控制台给的 ep- 开头的 ID',
+   models:[
+     ['doubao-seed-2-1-pro-260915','Seed-2.1 Pro · 官方首推 · 1024K 上下文'],
+     ['doubao-seed-2-1-pro-260628','Seed-2.1 Pro 早期版本'],
+     ['doubao-seed-2-1-turbo-260628','Seed-2.1 Turbo · 更快更省'],
+     ['doubao-seed-2-0-lite-260428','Seed-2.0 Lite · 全模态理解'],
+     ['doubao-seed-2-0-mini-260428','Seed-2.0 Mini · 低时延'],
+     ['doubao-seed-character-260628','角色扮演 / 剧情专用'],
+     ['doubao-seed-evolving','持续迭代的最新 Coding / Agent 版'],
+   ]},
+  {id:'minimax',name:'MiniMax',url:'https://api.minimax.chat/v1',model:'MiniMax-M2.7',
+   note:'若报端点不存在，请换成官方文档里的兼容端点',
+   models:[
+     ['MiniMax-M2.7','最新主力 · 强 Agent / 编程'],
+     ['MiniMax-M2.7-highspeed','同效果 · 输出更快'],
+     ['MiniMax-M2.5','上一代 · 200K 上下文'],
+   ]},
+  {id:'ollama',name:'本地 Ollama',url:'http://localhost:11434/v1',model:'qwen3:14b',
+   note:'需先 ollama pull，模型名用 ollama list 里显示的名字',
+   models:[
+     ['qwen3:14b','常见的本地中文模型'],
+     ['qwen3:8b','轻量'],
+     ['deepseek-r1:14b','本地推理模型'],
+     ['llama3.1:8b',''],
+   ]},
+  {id:'lmstudio',name:'本地 LM Studio',url:'http://localhost:1234/v1',model:'local-model',
+   note:'LM Studio 不校验模型名，填你实际加载的那个即可',
+   models:[['local-model','占位名，按实际加载的模型改']]},
+  {id:'custom',name:'自定义（自己填地址）',url:'',model:'',models:[]},
+];
+let providerLocked=false;
+
+/* ───────── 预制选项池（⟳ 换一批从这里随机抽）───────── */
+const POOLS={
+req:[
+ ["软末世","短篇软末世，内向少年 + 流浪猫，压抑安静风格，无激烈打斗，一共 3 章"],
+ ["堤防悬疑","短篇悬疑，老堤防上的家族秘密，沉默寡言的水利工程师主角，3 章，结尾开放式"],
+ ["都市怪谈","单元剧式都市怪谈，每章一个独立事件但暗线相连，温情中带凉意，共 5 章"],
+ ["权谋短剧","古风权谋短剧剧本，双主角对决，台词锋利，节奏快，共 4 集，每集 15 分钟"],
+ ["民国信札","民国旧宅悬疑，一封迟到四十年的信，双时间线交替叙事，共 4 章"],
+ ["记忆黑市","近未来赛博都市，记忆买卖黑市，硬核推理外壳下写孤独，共 5 章"],
+ ["四十天雨","南方水乡小镇群像，一场连下四十天的雨，平淡白描，共 3 章"],
+ ["末世公路","末世公路片，主角护送一个不知情的孩子去北方，荒凉感，共 5 章"],
+ ["破产倒计时","职场黑色幽默，三流公司破产倒计时，荒诞又真实，共 3 章"],
+ ["深海失联","深海科考站密闭空间惊悚，失联第七天，克制不靠惊吓，共 3 章"],
+ ["山门三人","武侠小品，一座山上的三个门派只剩三个传人，诙谐中带苍凉，共 4 章"],
+ ["认不出","亲子题材，父亲失忆后把女儿认成陌生人，细节克制不煽情，共 3 章"],
+ ["同梦之人","科幻悬疑，全城人同时梦到同一个陌生人，多视角拼接真相，共 5 章"],
+ ["口音破绽","犯罪题材，一次完美犯罪唯一的破绽是一句口音，冷硬派，共 4 章"],
+ ["灯塔守夜","孤岛灯塔，守塔人与一场不该出现的船难，心理悬疑，共 3 章"],
+ ["老宅租客","都市租房惊悚，租客发现房东从未存在过，日常渗出的不安，共 4 章"],
+ ["庙会七日","小镇庙会七天，一桩被所有人默许的旧案，群像与克制，共 4 章"],
+ ["药与谎","医疗题材，乡村医生隐瞒了一个诊断结果，伦理困境，共 3 章"],
+ ["末班船","海岛客运最后一班船，八个人和一个不存在的乘客，共 3 章"],
+ ["旧厂区","老厂区拆迁前最后一个月，三代工人各自的秘密，共 4 章"],
+],
+personality:["内向寡言，情绪藏在细节里","外向自来熟，嘴比脑快","冷静理智，万事讲逻辑",
+ "敏感多疑，习惯性试探别人","乐观热血，越挫越勇","温吞随和，但有自己的底线",
+ "刻薄嘴毒，心却是软的","要强好胜，输不起","随遇而安，没什么野心",
+ "控制欲强，什么都想插手","憨直木讷，想什么说什么","阴沉寡欢，习惯独来独往",
+ "表面圆滑，内心拧巴","极度自律，容不下失控"],
+speech:["语速慢，惜字如金","语速快，爱用反问","有口头禅，紧张时会重复",
+ "从不说谎，但会用沉默回避","惯用谎话自保，骗人时反而露怯","爱掉书袋，说话总带典故",
+ "满口方言俚语，粗粝直接","说话很客气，客气到让人不舒服","喜欢反问句，把问题抛回给对方",
+ "话不多，但每句都踩在点上","声音很轻，需要别人凑近听","习惯先重复对方的问题再回答"],
+motivation:["查清至亲失踪的真相","在乱局里活下去","证明自己的价值","守护身边的人",
+ "逃离过去的罪","偿还一笔说不清的债","找到那个只见过一面的人","把属于自己的东西夺回来",
+ "让某个人后悔","守住一个承诺","弄明白自己到底是谁","单纯想活下去，别的都不重要"],
+obsession:["寻找一件失物","得到某个人的认可","回到某个再也回不去的地方","重复某个仪式般的习惯",
+ "每天记录一件小事","反复核对同一个数字","保留所有旧票据","睡前把门窗检查三遍",
+ "给某个人写永远不会寄出的信","把一句话在心里默念很多年"],
+fear:["怕黑，怕密闭空间","怕被人抛下","怕自己变成最讨厌的那种人","怕水的声音",
+ "怕被人看清底牌","怕安静下来","怕接到陌生来电","怕重复父母的人生",
+ "怕被人可怜","怕自己说梦话","怕镜子里的自己","怕有一天醒来什么都不记得"],
+weakness:["共情过重，见不得别人受苦","固执，认死理","旧伤留下的身体隐疾","过度自信，轻敌",
+ "对某个人有致命的心软","不会拒绝别人的请求","贪杯，一喝就说真话","记性极差，常忘关键信息",
+ "体力差，跑不动","不擅长撒谎，一紧张就露破绽","对新事物本能排斥","舍不得花钱，为省钱吃过亏"],
+era:["现代都市","南方水乡小镇","近未来末世","架空古代","民国旧宅","近未来科幻太空站",
+ "赛博都市","九十年代国企家属院","沿海渔村","高原边境哨所","深山道观","战后重建中的小城"],
+rules:["现实向，无超自然","低魔：异能稀有且代价沉重","高魔：法术日常化",
+ "丧尸爆发初期，秩序尚未崩溃","AI 觉醒前夜","极端天气：永夜与长雨",
+ "记忆可以被买卖和篡改","梦境会互相污染","真相一旦被说出就会成真",
+ "科技只覆盖了城市，乡村仍是空白","所有超自然现象都能用科学解释（或看似能）",
+ "每一次许愿都要付出等价代价"],
+locations:["老堤防与水文站","城中村天台","末班地铁","废弃学校","边境小镇旅馆","一座灯塔",
+ "停业的旧照相馆","跨江大桥的检修通道","乡镇卫生院","常年漏雨的图书馆",
+ "山腰的柴油发电机房","废弃火车站的行李寄存处","镇上唯一还开门的早餐铺","被水淹了一半的老宅"],
+goal:["查清真相","带某人回家","在七天内活下来","夺回属于自己的东西","解开自己的身世之谜",
+ "把债还清","找到失踪的那个人","让某件事重新开始","守住一个秘密不被人发现",
+ "完成父亲没做完的事","活着见到下一个人","彻底离开这个地方"],
+conflict:["真相与安全的取舍","个人执念 vs 他人安危","信任与怀疑","生存与底线","记忆与身份",
+ "承诺与现实","亲情与道义","自私与良知","时间不够用","新旧秩序的碰撞",
+ "说出真相 vs 保护别人","想要的东西和必须做的事相反"],
+foreshadow:["一件反复出现的小物件","某个角色说不通的细节","一句被误听的话","时间线上的对不上账",
+ "同一场景两次描写的差异","一个总在固定时间出现的人","某样东西的数量悄悄变了",
+ "有人对某个寻常词反应过度","照片里多出来的一个人","反复出现的天气或气味"],
+cliffhanger:["每章结尾留下一个未完成的动作","结尾抛出新谜团或新角色","以一句意味不明的对话收束",
+ "环境异变收尾（灯灭/门开/声音停）","结尾让主角发现一个与事实矛盾的细节",
+ "以某人没有回答的问题结束","结尾出现一个不该出现的物件","以倒计时式的短句收束",
+ "结尾让主角做出一个读者无法理解的选择","以一个回头或停顿结束"],
+forbidden:["不得出现真实政治人物","主角不得使用枪械","不得描写血腥酷刑细节","不出现爱情线",
+ "不出现超自然力量","不得出现未成年人受伤害的情节","不得使用第一人称",
+ "不得出现真实存在的品牌与企业名","不得描写自杀的具体方式","不得出现脏话",
+ "不写死亡结局","不得出现动物受虐描写"],
+taboo:["绝不对陌生人透露家庭住址","绝不说出那个名字","绝不会先动手","哪怕撒谎也要护住同伴",
+ "绝不在人前哭","绝不碰酒","绝不欠人情","绝不抛下受伤的人",
+ "绝不当着孩子的面抽烟","绝不提那年夏天","绝不打开那扇门","绝不承认自己害怕"],
+};
+
+/* 预制项 → 输入框 datalist（打字时也能下拉选） */
+const DATALIST_MAP={personality:'dl-personality',speech:'dl-speech',motivation:'dl-motivation',
+  obsession:'dl-obsession',fear:'dl-fear',weakness:'dl-weakness',era:'dl-era',rules:'dl-rules',
+  locations:'dl-locations',goal:'dl-goal',conflict:'dl-conflict',cliffhanger:'dl-cliffhanger',
+  foreshadow:'dl-foreshadow'};
+const CHAR_LIST={personality:'dl-personality',speech:'dl-speech',motivation:'dl-motivation',
+  obsession:'dl-obsession',fear:'dl-fear',weakness:'dl-weakness'};
+
+function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function pickRandom(arr,n){
+  const a=arr.slice(),out=[];
+  while(out.length<n&&a.length){out.push(a.splice(Math.floor(Math.random()*a.length),1)[0]);}
+  return out;
+}
+function labelOf(it){return Array.isArray(it)?it[0]:it;}
+function valueOf(it){return Array.isArray(it)?it[1]:it;}
+
+function buildDatalists(){
+  Object.keys(DATALIST_MAP).forEach(k=>{
+    if(document.getElementById(DATALIST_MAP[k]))return;
+    const dl=document.createElement('datalist');dl.id=DATALIST_MAP[k];
+    dl.innerHTML=POOLS[k].map(v=>`<option value="${esc(valueOf(v))}"></option>`).join('');
+    document.body.appendChild(dl);
+  });
+}
+/* 渲染某组 chip（随机抽 n 个）*/
+function renderChips(key){
+  const box=document.getElementById('chips-'+key);if(!box)return;
+  const n=+(box.dataset.n||4);
+  const items=pickRandom(POOLS[key],Math.min(n,POOLS[key].length));
+  box._items=items;
+  const mode=box.dataset.mode||'set',target=box.dataset.target||'';
+  box.innerHTML=items.map(it=>`<button type="button" class="chip" data-mode="${mode}"
+    data-target="${esc(target)}" data-value="${esc(valueOf(it))}"
+    onclick="chipTo(this)">${esc(labelOf(it))}</button>`).join('');
+  box.style.display='';
+}
+function shuffle(key){renderChips(key);toast('已换一批：'+(NAMES[key]||key));}
+const NAMES={req:'示例题材',era:'时代与环境',rules:'世界规则',locations:'关键地点',
+  goal:'主角目标',conflict:'核心冲突',foreshadow:'伏笔',cliffhanger:'悬念',
+  forbidden:'禁止内容',taboo:'角色禁忌'};
+function chipTo(btn){
+  const mode=btn.dataset.mode||'set';
+  let el;
+  if(btn.dataset.target){el=document.querySelector(btn.dataset.target);}
+  else{ // 追加到每个人物卡的禁忌栏
+    fillAllTaboo(btn.dataset.value);return;
+  }
+  if(!el)return;
+  const v=btn.dataset.value;
+  if(mode==='line'){el.value=el.value.trim()?el.value.trim()+'\n'+v:v;}
+  else{el.value=v;}
+  el.focus();
+}
+function fillAllTaboo(v){
+  const cards=[...document.querySelectorAll('#chars .char-card')];
+  if(!cards.length){toast('先添加一个人物卡再点禁忌','err');return;}
+  cards.forEach(card=>{
+    const ta=card.querySelector('[data-k="taboo"]');if(!ta)return;
+    ta.value=ta.value.trim()?ta.value.trim()+'，'+v:v;
+  });
+  toast('已追加到 '+cards.length+' 个人物卡');
+}
+
+/* ───────── 人物卡 ───────── */
+const CHAR_FIELDS=[
+  ["name","姓名 *"],["age","年龄"],["appearance","外貌"],["personality","性格"],
+  ["speech","说话习惯"],["motivation","动机"],["obsession","内心执念"],
+  ["fear","恐惧"],["weakness","弱点"],["taboo","禁忌 / OOC 红线（绝不可违反，校对 Agent 用它把关）"]
+];
+function addChar(data){
+  const box=document.getElementById('chars');
+  const div=document.createElement('div');div.className='char-card';
+  div.innerHTML=`<div class="head"><b>人物</b>
+    <span>
+      <button type="button" class="ico" onclick="randomizeChar(this)" title="随机生成这个人物的设定">⟳ 随机</button>
+      <button type="button" class="mini" onclick="this.closest('.char-card').remove();renumber()">删除</button>
+    </span></div>
+    <div class="grid2">${CHAR_FIELDS.map(([k,l])=>{
+      const v=(data&&data[k])||'';
+      if(k==='taboo')return `<div style="grid-column:1/-1"><label>${l}</label>
+        <textarea rows="2" data-k="${k}">${esc(v)}</textarea></div>`;
+      return `<div><label>${l}</label><input type="text" data-k="${k}"
+        ${CHAR_LIST[k]?`list="${CHAR_LIST[k]}"`:''} value="${esc(v)}"></div>`;
+    }).join('')}</div>`;
+  box.appendChild(div);renumber();
+}
+function renumber(){
+  document.querySelectorAll('#chars .char-card b').forEach((b,i)=>b.textContent=`人物 ${i+1}`);
+}
+function randomizeChar(btn){
+  const card=btn.closest('.char-card');if(!card)return;
+  const r=k=>valueOf(pickRandom(POOLS[k],1)[0]);
+  const set=(k,v)=>{const el=card.querySelector(`[data-k="${k}"]`);if(el)el.value=v;};
+  set('personality',r('personality'));set('speech',r('speech'));
+  set('motivation',r('motivation'));set('obsession',r('obsession'));
+  set('fear',r('fear'));set('weakness',r('weakness'));
+  set('taboo',r('taboo'));
+  const nm=card.querySelector('[data-k="name"]');
+  if(nm&&!nm.value.trim()){nm.value=valueOf(pickRandom(['林岸','沈砚','周迟','陆晚','顾言','许棠',
+    '崔明远','苏晓','老周','陈默','叶芜','江照'],1)[0]);}
+  toast('已随机生成人物设定');
+}
+function onAutoCharsChange(silent){
+  const on=document.getElementById('autoChars').checked;
+  document.getElementById('charArea').style.display=on?'none':'';
+  if(on&&!silent)toast('已交由策划 Agent 自动设计人物（人物卡内容不再参与生成）','ok');
+}
+
+/* ───────── 表单收集 / 回填 ───────── */
+function val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
+function numVal(id){const v=+val(id);return isNaN(v)?0:v;}
+function collectForm(){
+  const autoChars=document.getElementById('autoChars').checked;
+  const chars=autoChars?[]:[...document.querySelectorAll('#chars .char-card')].map(card=>{
+    const o={};card.querySelectorAll('[data-k]').forEach(el=>o[el.dataset.k]=el.value.trim());return o;})
+    .filter(c=>c.name||c.personality||c.motivation);
+  return {
+    requirement:val('requirement'),
+    characters:chars,
+    world_era:val('world_era'),world_rules:val('world_rules'),world_locations:val('world_locations'),
+    goal:val('goal'),conflict:val('conflict'),
+    style_sample:val('style_sample'),word_count:numVal('word_count'),
+    foreshadow:val('foreshadow'),cliffhanger:val('cliffhanger'),forbidden:val('forbidden'),
+    chapters:Math.min(5,Math.max(1,numVal('chapters')||1)),
+    api_key:val('api_key'),base_url:val('base_url'),model:val('model'),
+    mock:document.getElementById('mock').checked,
+    thinking:document.getElementById('thinking').checked
+  };
+}
+const FIELD_IDS=["requirement","world_era","world_rules","world_locations","goal","conflict",
+  "style_sample","word_count","foreshadow","cliffhanger","forbidden","chapters","api_key","base_url","model"];
+function fillForm(d){
+  if(!d)return;
+  FIELD_IDS.forEach(id=>{const el=document.getElementById(id);
+    if(el&&d[id]!==undefined&&d[id]!==null)el.value=d[id];});
+  document.getElementById('chars').innerHTML='';
+  (d.characters&&d.characters.length?d.characters:[{}]).forEach(c=>addChar(c));
+  document.getElementById('mock').checked=!!d.mock;
+  const ac=document.getElementById('autoChars');
+  ac.checked=!!(d.autoChars);onAutoCharsChange(true);
+  syncProviderFromValues();
+  onMockChange();
+}
+function saveProject(){
+  const d=collectForm();delete d.api_key;
+  d.autoChars=document.getElementById('autoChars').checked;
+  d.provider=document.getElementById('provider').value;
+  download('story_project.json',JSON.stringify(d,null,2),'application/json');
+}
+function loadProject(input){
+  const f=input.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{fillForm(JSON.parse(r.result));toast('项目已加载','ok');}
+    catch(e){toast('项目文件格式错误','err');}};
+  r.readAsText(f);input.value='';
+}
+function resetForm(){
+  askConfirm('清空所有表单内容？此操作不可撤销。\n（API 平台 / 地址 / 模型 / Key 会保留，不必重填。）',()=>{
+    FIELD_IDS.forEach(id=>{const el=document.getElementById(id);
+      if(el){el.value=(id==='chapters')?'3':'';}});
+    document.getElementById('chars').innerHTML='';addChar();
+    document.getElementById('mock').checked=false;
+    document.getElementById('autoChars').checked=false;onAutoCharsChange(true);
+    document.getElementById('provider').value='';onProviderChange();
+    lsDel(K_FORM);                 // 连同本地草稿一起清掉，否则刷新又被恢复回来
+    loadLlm();                     // 但 API 配置属于"环境"而非"内容"，给它留着
+    onMockChange();
+    toast('表单已重置','ok');
+  });
+}
+const DEMO={
+  requirement:"短篇软末世，内向少年 + 流浪猫，压抑安静风格，无激烈打斗，一共 3 章",
+  characters:[{name:"苏晓",age:"17",appearance:"瘦高，袖口磨得起毛",
+    personality:"内向寡言，情绪藏在细节里",speech:"语速慢，惜字如金",
+    motivation:"在物资断供前找到安全的落脚点",obsession:"每天给猫留半罐食物",
+    fear:"怕被人抛下",weakness:"见不得动物受苦",taboo:"绝不偷小孩的东西"},
+   {name:"老周",age:"40",appearance:"络腮胡，左眉有疤",
+    personality:"外冷内热，办事讲规矩",speech:"惯用谎话自保，骗人时反而露怯",
+    motivation:"守住便利店最后的物资",obsession:"反复擦一块停了的表",
+    fear:"怕孤独死掉",weakness:"耳背，雨夜听不清脚步声",taboo:"绝不进医院地下室"}],
+  world_era:"近未来末世",world_rules:"丧尸爆发初期，秩序尚未崩溃",
+  world_locations:"废弃便利店、暴雨中的天桥",
+  goal:"带猫活过这个雨季",conflict:"生存与底线",
+  word_count:3000,cliffhanger:"每章结尾留下一个未完成的动作",forbidden:"不得描写血腥酷刑细节"
+};
+function fillDemo(){fillForm(DEMO);toast('已填充示例','ok');}
+
+function download(name,content,type){
+  try{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([content],{type}));
+    a.download=name;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    toast('已导出 '+name+'（若浏览器未弹出下载，请用 Chrome/Edge 打开本页）','ok');
+  }catch(e){toast('导出失败：'+e.message,'err');}
+}
+function togglePw(btn){
+  const el=document.getElementById('api_key');
+  el.type=el.type==='password'?'text':'password';
+  btn.textContent=el.type==='password'?'显示':'隐藏';
+}
+
+/* ───────── 平台下拉 ───────── */
+function initProviders(){
+  const sel=document.getElementById('provider');
+  sel.innerHTML=PROVIDERS.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+}
+function onProviderChange(silent){
+  const id=document.getElementById('provider').value;
+  const p=PROVIDERS.find(x=>x.id===id);
+  const urlEl=document.getElementById('base_url'),modelEl=document.getElementById('model');
+  if(id==='custom'){
+    urlEl.readOnly=false;modelEl.readOnly=false;
+    document.getElementById('resolvedInfo').innerHTML='自定义模式：请自行填写该平台的 Base URL 与模型名';
+    renderModelPicker();
+    if(!silent)toast('自定义模式：请自行填写地址与模型名');
+    return;
+  }
+  if(!p){renderModelPicker();updateResolved();return;}
+  urlEl.value=p.url;modelEl.value=p.model;
+  // 只锁地址防手误；模型名始终可编辑——可点 ▾ 换版本，也可手填任意模型 ID
+  urlEl.readOnly=(id!==''&&id!=='deepseek');
+  modelEl.readOnly=false;
+  renderModelPicker();
+  updateResolved();
+  if(id&&!silent)toast('已选「'+p.name+'」，模型名点 ▾ 可换版本','ok');
+}
+/* ───────── 模型版本选择器 ───────── */
+/* 智谱「强制思考」模型：思考过程关不掉，写长文天然慢（名单与后端 llm.py 保持一致）。
+   页面上标出来，免得用户在设置里关了半天「深度思考」却毫无效果。 */
+const FORCE_THINK=['glm-5.3-flashx','glm-5.3-flash','glm-5.3','glm-4.7','glm-4.5v'];
+function isForceThink(m){
+  m=(m||'').toLowerCase();
+  return FORCE_THINK.some(p=>m.startsWith(p));
+}
+function renderModelPicker(){
+  const id=document.getElementById('provider').value;
+  const p=PROVIDERS.find(x=>x.id===id);
+  const box=document.getElementById('modelPicker');
+  const list=(p&&p.models)||[];
+  const cur=document.getElementById('model').value.trim();
+  if(!list.length){
+    box.innerHTML='<div class="ph">'+
+      ((!id||id==='custom')
+        ?'这个平台没有内置版本清单，直接在输入框里填模型名即可；<br>填好后点「测试连接」验证是否可用。'
+        :'该平台暂无内置版本清单，直接手填模型名即可。')+'</div>';
+    return;
+  }
+  box.innerHTML=list.map(([m,d])=>{
+    const ft=isForceThink(m);
+    return '<div class="pi '+(m===cur?'cur':'')+'" data-m="'+esc(m)+
+      '" onclick="pickModel(this.dataset.m)">'+
+      '<b>'+esc(m)+'</b>'+
+      (ft?'<em class="ftbadge">强制思考 · 较慢</em>':'')+
+      (d?'<span>'+esc(d)+'</span>':'')+'</div>';
+  }).join('');
+}
+function toggleModelPicker(ev){
+  if(ev)ev.stopPropagation();
+  const box=document.getElementById('modelPicker');
+  if(box.classList.contains('show')){box.classList.remove('show');return;}
+  renderModelPicker();box.classList.add('show');
+}
+function pickModel(name){
+  if(!name)return;
+  document.getElementById('model').value=name;
+  document.getElementById('modelPicker').classList.remove('show');
+  updateResolved();
+  if(isForceThink(name)){
+    toast('「'+name+'」会强制开启思考且关不掉，写长文较慢；'+
+      '如果频繁超时，换成 glm-5.2 / glm-5.1 会快很多','err');
+  }else{
+    toast('已选模型：'+name,'ok');
+  }
+}
+document.addEventListener('click',function(e){
+  const box=document.getElementById('modelPicker');
+  if(!box||!box.classList.contains('show'))return;
+  if(box.contains(e.target)||e.target.id==='model'||e.target.classList.contains('pick-btn'))return;
+  box.classList.remove('show');
+});
+function modelDesc(id,name){
+  const p=PROVIDERS.find(x=>x.id===id);
+  if(!p||!p.models)return '';
+  const hit=p.models.find(pair=>pair[0]===name);
+  return hit?hit[1]:'';
+}
+function updateResolved(){
+  const id=document.getElementById('provider').value;
+  const p=PROVIDERS.find(x=>x.id===id);
+  const box=document.getElementById('resolvedInfo');
+  const url=document.getElementById('base_url').value.trim();
+  const model=document.getElementById('model').value.trim();
+  const desc=modelDesc(id,model);
+  const tail=model?('｜模型：<b>'+esc(model)+'</b>'+(desc?'（'+esc(desc)+'）':'')):'';
+  if(!id){
+    box.innerHTML=(url?('当前地址：<b>'+esc(url)+'</b>'):'未选择平台：留空即走 DeepSeek 官方默认地址')+tail;
+    return;
+  }
+  if(id==='custom'){
+    box.innerHTML=(url?('当前地址：<b>'+esc(url)+'</b>'):'请填写 Base URL')+tail;return;
+  }
+  if(id==='deepseek'){
+    box.innerHTML='当前地址：<b>留空（走 DeepSeek 官方 https://api.deepseek.com）</b>'+tail;return;
+  }
+  box.innerHTML='当前地址：<b>'+esc(p.url)+'</b>'+tail;
+}
+function syncProviderFromValues(){
+  const url=document.getElementById('base_url').value.trim();
+  const model=document.getElementById('model').value.trim();
+  // 按地址匹配平台（模型名现在可换版本，不能作为匹配依据）
+  let hit=PROVIDERS.find(p=>p.id&&p.id!=='custom'&&p.url&&p.url===url);
+  if(!hit&&!url){hit=PROVIDERS.find(p=>p.id==='deepseek');}
+  if(hit){document.getElementById('provider').value=hit.id;}
+  else if(url||model){document.getElementById('provider').value='custom';}
+  const isCustom=document.getElementById('provider').value==='custom';
+  document.getElementById('base_url').readOnly=!isCustom;
+  document.getElementById('model').readOnly=false;   // 模型名永远可编辑
+  renderModelPicker();
+  updateResolved();
+}
+/* ───────── 测试连接 ───────── */
+async function testConnection(){
+  const btn=document.getElementById('testBtn');
+  const box=document.getElementById('connBox');
+  const hint=document.getElementById('connHint');
+  const f=collectForm();
+  const model=(f.model||'').trim();
+  if(!model){
+    box.className='bad';box.style.display='block';
+    box.innerHTML='<b>还没填模型名。</b>先在上方选平台（会自动带出推荐模型），或直接手填一个模型 ID 再测。';
+    toast('请先填模型名','err');
+    return;
+  }
+  btn.disabled=true;const old=btn.textContent;btn.textContent='测试中…';
+  hint.textContent='正在真实调用一次模型，思考型模型可能要十几秒';
+  box.className='pending';box.style.display='block';
+  box.innerHTML='正在连接 <code>'+esc(f.base_url||'（平台默认地址）')+'</code> ，模型 <code>'+esc(model)+'</code> …';
+  const listHtml=(arr)=>'<div style="margin-top:6px">平台可列出这些模型，点一下即可填入：'+
+    '<div class="mini-list">'+arr.map(m=>
+      '<span data-m="'+esc(m)+'" onclick="pickModel(this.dataset.m)">'+esc(m)+'</span>').join('')+
+    '</div></div>';
+  try{
+    const resp=await fetch('/api/test_connection',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({api_key:f.api_key,base_url:f.base_url,model:model})});
+    const d=await resp.json();
+    if(d.ok){
+      box.className='ok';
+      box.innerHTML='<b>✓ '+esc(d.message)+'</b><br>'+
+        '实际地址：<code>'+esc(d.base_url)+'</code>　模型：<code>'+esc(d.model)+'</code>　'+
+        '耗时 '+d.latency_ms+' ms<br>模型回话：'+esc(d.reply||'（空）')+
+        (d.note?'<br>⚠ '+esc(d.note):'')+
+        ((d.models&&d.models.length)?listHtml(d.models):'');
+      toast('连接成功','ok');
+    }else{
+      box.className='bad';
+      box.innerHTML='<b>✗ 连接失败</b><br>'+esc(d.message)+
+        '<br><span style="opacity:.85">排查信息：地址 <code>'+esc(d.base_url||'（空）')+
+        '</code>　模型 <code>'+esc(d.model||'（空）')+'</code>'+
+        (d.latency_ms!=null?('　耗时 '+d.latency_ms+' ms'):'')+'</span>'+
+        ((d.models&&d.models.length)?listHtml(d.models):'');
+      toast('连接失败，看下方说明','err');
+    }
+  }catch(e){
+    box.className='bad';box.style.display='block';
+    box.innerHTML='<b>✗ 请求没发出去</b><br>'+esc(e.message)+
+      '<br>多半是网页服务已经停了，重新双击 start.bat 即可。';
+  }finally{
+    btn.disabled=false;btn.textContent=old;
+    hint.textContent='真实发一次最小请求，验证 Key / 地址 / 模型名是否都对';
+  }
+}
+function onMockChange(){
+  const on=document.getElementById('mock').checked;
+  document.getElementById('mockWarn').style.display=on?'':'none';
+}
+
+/* ───────── 需求 AI 润色 ───────── */
+let lastReq='';
+async function polishReq(){
+  const el=document.getElementById('requirement');
+  const t=el.value.trim();
+  if(!t){toast('先写点东西再润色，只言片语就行','err');return;}
+  const btn=document.getElementById('polishBtn'),hint=document.getElementById('polishHint');
+  btn.disabled=true;hint.textContent='润色中…';
+  const f=collectForm();
+  try{
+    const resp=await fetch('/api/polish_requirement',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:t,api_key:f.api_key,base_url:f.base_url,model:f.model,mock:f.mock,thinking:f.thinking})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
+    const data=await resp.json();
+    lastReq=el.value;el.value=data.text;
+    document.getElementById('revertBtn').style.display='';
+    hint.textContent='已润色，可继续手改或还原';
+    toast('需求已润色','ok');
+  }catch(e){hint.textContent='润色失败：'+e.message;toast('润色失败：'+e.message,'err');}
+  finally{btn.disabled=false;}
+}
+function revertReq(){
+  document.getElementById('requirement').value=lastReq;
+  document.getElementById('revertBtn').style.display='none';
+  document.getElementById('polishHint').textContent='已还原';
+}
+
+/* ───────── 分段 AI 补全 ───────── */
+function currentOf(section,f){
+  if(section==='characters')return {characters:f.characters};
+  if(section==='world')return {world_era:f.world_era,world_rules:f.world_rules,
+    world_locations:f.world_locations,goal:f.goal,conflict:f.conflict};
+  return {style_sample:f.style_sample,word_count:f.word_count,
+    foreshadow:f.foreshadow,cliffhanger:f.cliffhanger,forbidden:f.forbidden};
+}
+async function aiFill(section,overwrite){
+  if(running){toast('正在生成中，请稍候','err');return;}
+  const f=collectForm();
+  if(!f.requirement){toast('先填【核心需求】，AI 才有补全依据','err');return;}
+  const btn=document.getElementById('fill-'+section+(overwrite?'-ov':''));
+  const hint=document.getElementById('fillHint-'+section);
+  const label=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='生成中…';}
+  if(hint)hint.textContent='AI 生成中…';
+  try{
+    const resp=await fetch('/api/ai_fill',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({section,requirement:f.requirement,current:currentOf(section,f),
+        overwrite:!!overwrite,api_key:f.api_key,base_url:f.base_url,model:f.model,mock:f.mock,thinking:f.thinking})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
+    const data=await resp.json();
+    const keys=Object.keys(data.fields||{});
+    if(!keys.length){
+      if(hint)hint.textContent=data.message||'没有需要补全的字段';
+      toast(data.message||'没有需要补全的字段','err');return;
+    }
+    applyFields(section,data.fields);
+    if(hint)hint.textContent='已填入：'+keys.join('、');
+    toast('AI 已补全 '+keys.length+' 个字段','ok');
+  }catch(e){
+    if(hint)hint.textContent='失败：'+e.message;
+    toast('AI 补全失败：'+e.message,'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=label;}
+  }
+}
+function applyFields(section,fields){
+  if(section==='characters'&&Array.isArray(fields.characters)){
+    document.getElementById('chars').innerHTML='';
+    fields.characters.forEach(c=>addChar(c));
+  }else{
+    Object.keys(fields).forEach(k=>{
+      const el=document.getElementById(k);if(!el)return;
+      el.value=(k==='forbidden'&&Array.isArray(fields[k]))?fields[k].join('\n'):fields[k];
+    });
+  }
+}
+
+/* ───────── 流水线看板 ───────── */
+const P=document.getElementById('progress'),F=document.getElementById('flowNow'),R=document.getElementById('result');
+let running=false,runData={outline:null,chapters:[],memory:null,mock:false};
+function step(html,cls=''){
+  const d=document.createElement('div');d.className='step '+cls;d.innerHTML=html;
+  P.appendChild(d);document.getElementById('board').scrollTop=1e9;return d;
+}
+let cur=null;
+let progEl=null;   // 当前行末尾的进度徽标
+function flow(html){F.innerHTML='<span class="spin">⚙</span> '+html;}
+function doneCur(html,cls){if(cur){cur.innerHTML=html;cur.className='step '+cls;cur=null;}
+  progEl=null;}
+
+/* 流式生成进度：模型每吐一段就刷新一次，让用户知道"它还在干活" */
+function showProgress(kind,chars){
+  if(!cur)return;
+  if(!progEl||progEl.parentNode!==cur){
+    progEl=document.createElement('span');
+    cur.appendChild(progEl);
+  }
+  progEl.className='prog'+(kind==='thinking'?' think':'');
+  progEl.textContent=(kind==='thinking'?'思考中 ':'已生成 ')+chars+' 字';
+}
+function boardOpen(){document.getElementById('board').style.display='';}
+
+/* ───────── 续写只读锁定 ───────── */
+const LOCK_SEL=['#requirement','#style_sample','#word_count','#foreshadow','#cliffhanger',
+  '#forbidden','#world_era','#world_rules','#world_locations','#goal','#conflict','#provider'];
+function setFormLocked(locked){
+  providerLocked=locked;
+  LOCK_SEL.forEach(s=>{const el=document.querySelector(s);if(el)el.disabled=locked;});
+  document.querySelectorAll('.chip').forEach(el=>el.disabled=locked);
+  ['fill-characters','fill-characters-ov','fill-world','fill-world-ov','fill-advanced','fill-advanced-ov']
+    .forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=locked;});
+  document.querySelectorAll('#charArea input, #charArea textarea, #charArea button')
+    .forEach(el=>el.disabled=locked);
+  const ac=document.getElementById('autoChars');if(ac)ac.disabled=locked;
+  document.getElementById('unlockBtn').style.display=locked?'':'none';
+}
+
+/* ───────── 生成 / 续写 / 预览 ───────── */
+async function generate(mode){
+  if(running)return;
+  const f=collectForm();
+  if(!f.requirement){toast('核心需求不能为空 —— 请填写【核心需求】，或点上方「填充示例」快速试跑','err');return;}
+  // 全新创作会覆盖服务端的那份会话存档：已有章节时先问一句，免得误清
+  if(mode!=='continue'&&hasSession&&runData.chapters.length){
+    askConfirm('这次是【全新创作】。\n\n本页现有 '+runData.chapters.length+
+      ' 章已定稿内容会被清空，之后也无法再「续写」这一篇。\n'
+      +'（已写好的 md / json 文件仍保存在 outputs_web 里，不会被删除。）\n\n确定开始新故事吗？',
+      ()=>startGenerate(mode,f));
+    return;
+  }
+  startGenerate(mode,f);
+}
+async function startGenerate(mode,f){
+  saveLlm();saveDraft();                 // 开跑前把当前设置与表单存一份
+  setFormLocked(mode==='continue');
+  const cont0=mode==='continue';
+  // 续写时保留页面上已有的章节（恢复进度后继续往下写），全新创作才清空
+  runData=cont0
+    ? {outline:runData.outline,chapters:runData.chapters.slice(),memory:runData.memory,mock:f.mock}
+    : {outline:null,chapters:[],memory:null,mock:f.mock};
+  running=true;
+  const gen=document.getElementById('genBtn'),cont=document.getElementById('contBtn'),pv=document.getElementById('previewBtn');
+  gen.disabled=cont.disabled=pv.disabled=true;
+  gen.textContent=mode==='continue'?'续写中…':'创作中…';
+  P.innerHTML='';F.innerHTML='';cur=null;boardOpen();
+  if(!cont0)R.innerHTML='';
+  document.getElementById('memoryCard').style.display='';
+  document.getElementById('resultCard').style.display='';
+  if(!cont0)document.getElementById('resultTag').textContent='';
+
+  try{
+    const body={...f,mode,chapters:mode==='continue'?1:f.chapters};
+    if(mode==='continue'){
+      const m=parseMemory();
+      if(m)body.memory_override=m;
+    }
+    const resp=await fetch('/api/generate',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
+    await readSSE(resp);
+  }catch(e){
+    const m=(e&&e.message)?e.message:String(e);
+    if(cur)doneCur('⚠ 连接中断','bad');
+    flow('已停止');
+    step('<b>⚠ '+(/network|Failed to fetch|Load failed|fetch/i.test(m)
+        ?'和后端的连接断了':'出错')+'</b><div class="errmsg">'+esc(m)+'</div>'+
+      '<div class="errmsg" style="margin-top:6px">若下方没有具体说明，请查看运行服务的黑色窗口里的报错。'+
+      '常见原因：某一步调用模型失败或超时。</div>','bad');
+    toast('创作失败：'+m,'err');
+  }
+  finally{
+    running=false;gen.disabled=false;cont.disabled=!runData.chapters.length;
+    pv.disabled=false;gen.textContent='开始创作';
+  }
+}
+async function previewOutline(){
+  if(running)return;
+  const f=collectForm();
+  if(!f.requirement){toast('核心需求不能为空','err');return;}
+  running=true;const pv=document.getElementById('previewBtn');
+  pv.disabled=true;boardOpen();F.innerHTML='<span class="spin">⚙</span> 策划 Agent 生成大纲中…';
+  try{
+    const resp=await fetch('/api/outline_preview',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(f)});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
+    const data=await resp.json();
+    runData.outline=data.outline;
+    runData.mock=f.mock;
+    document.getElementById('resultCard').style.display='';
+    showOutline();
+    flow('大纲预览完成，未生成正文');
+  }catch(e){flow('预览失败：'+esc(e.message));toast('预览失败：'+e.message,'err');}
+  finally{running=false;pv.disabled=false;}
+}
+function parseMemory(){
+  const t=document.getElementById('memoryBox').value.trim();
+  if(!t)return null;
+  try{return JSON.parse(t);}
+  catch(e){toast('记忆库 JSON 格式有误，已忽略修改；请检查逗号与引号','err');return null;}
+}
+function applyMemoryEdit(){
+  const m=parseMemory();
+  document.getElementById('memoryHint').textContent=m?'已保存，续写时生效':'未保存（格式有误）';
+}
+
+/* ───────── SSE 解析与事件处理 ───────── */
+async function readSSE(resp){
+  const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
+  while(true){
+    const{done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const chunk=buf.slice(0,i);buf=buf.slice(i+2);
+      if(chunk.startsWith('data: '))handle(JSON.parse(chunk.slice(6)));
+    }
+  }
+}
+function handle(ev){
+  switch(ev.type){
+    case 'start':
+      runData.mock=!!ev.mock;
+      step(ev.mode==='continue'
+        ? `续写模式：从第 ${ev.start_index} 章继续（复用策划案与记忆）`
+        : (ev.mock?'⚠ Mock 模式启动，共 ':'流水线启动，共 ')+ev.chapters+' 章'
+          +(ev.mock?'（不调用真实模型，正文为固定示例文本）':''));
+      if(ev.mock)step('⚠ Mock 模式输出的章节是预先写死的示例文本，'+
+        '所以每次结果都一样——这不是故障。要看真实创作，请取消勾选 Mock 并填 API Key。','bad');
+      break;
+    case 'chapter_start':
+      flow('第 '+ev.index+' 章流水线运行中');
+      cur=ev.is_first?step('🧭 策划 Agent：生成大纲与人设…','on')
+                     :step('✍ 撰稿 Agent：撰写第 '+ev.index+' 章…','on');
+      break;
+    case 'planner_done':{
+      runData.outline=ev.outline;
+      const o=ev.outline;
+      doneCur('🧭 策划完成：《'+esc(o.title||'')+'》 人物 '+(o.characters||[]).length+' 个 · 大纲 '+(o.chapters||[]).length+' 章');
+      cur=step('✍ 撰稿 Agent：撰写第 1 章…','on');
+      break;}
+    case 'writer_done':{
+      doneCur(ev.round>0?('✍ 第 '+ev.round+' 轮重写完成（上限 3 轮）'):'✍ 初稿完成');
+      cur=step('🔍 校对 Agent：检查 OOC / 时间线 / 设定 / 逻辑…','on');
+      break;}
+    case 'review':{
+      if(ev.verdict==='fail'){
+        const c=ev.comments||[];
+        doneCur('⚠ 校对不通过：'+c.length+' 个严重问题 → 打回重写','bad');
+        c.forEach(x=>step('<div class="cmt">['+esc(x.type)+'] 「'+esc(x.quote)+'」 '+
+          esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
+        cur=step('✍ 撰稿 Agent：定向重写中（不推翻全文）…','on');
+      }else{
+        const minors=(ev.comments||[]).filter(x=>x.severity==='minor');
+        doneCur('🔍 校对通过'+(minors.length?'（'+minors.length+' 条 minor 意见转润色）':''),'ok');
+        minors.forEach(x=>step('<div class="cmt minor">[minor] '+esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
+        cur=step('✒ 润色 Agent：打磨文字（不动剧情）…','on');
+      }
+      break;}
+    case 'rewrite':
+      flow('第 '+ev.index+' 章第 '+ev.round+' 轮重写中（重写计数 '+ev.round+'/3）');
+      break;
+    case 'writing':   // 流式进度：正文已生成多少字 / 思考中已输出多少字
+      showProgress(ev.kind,ev.chars);
+      break;
+    case 'ping':      // 后端心跳，保持连接，无需展示
+      break;
+    case 'notice':    // 可降级的告警：某环节出问题被跳过，但流水线继续跑
+      step('⚠ '+esc(ev.message),'bad');
+      break;
+    case 'chapter_done':{
+      doneCur('✅ 第 '+ev.index+' 章《'+esc(ev.title)+'》定稿（重写 '+ev.rounds+' 轮）','ok');
+      const chapter={index:ev.index,title:ev.title,text:ev.text,rounds:ev.rounds,
+        mock:!!ev.mock,comments:ev.minor_comments||[]};
+      runData.chapters.push(chapter);
+      renderChapter(chapter);
+      document.getElementById('contBtn').disabled=false;
+      document.getElementById('resultTag').textContent='已定稿 '+runData.chapters.length+' 章';
+      break;}
+    case 'all_done':
+      runData.memory=ev.memory;runData.outline=ev.outline;runData.mock=!!ev.mock;
+      document.getElementById('memoryBox').value=JSON.stringify(ev.memory,null,2);
+      document.getElementById('memoryHint').textContent='';
+      document.getElementById('outDirHint').textContent='产物目录：'+ev.out_dir;
+      document.getElementById('contBtn').disabled=false;
+      flow('全部完成，共 '+ev.total_chapters+' 章定稿');
+      step('<b>全部完成</b>，产物已保存到 '+esc(ev.out_dir),'ok');
+      if(ev.mock)step('<b>注意</b>：本次为 Mock 模式，正文是固定示例文本，'+
+        '仅供验证流程。要写真实作品请取消勾选 Mock 并填 API Key。','bad');
+      break;
+    case 'error':
+      if(cur)doneCur('⚠ 流水线中断','bad');
+      flow('已中断'+(ev.done_chapters?('，已完成 '+ev.done_chapters+' 章'):''));
+      step('<b>⚠ 出错中断</b><div class="errmsg">'+
+        esc(String(ev.message||'未知错误')).replace(/\n/g,'<br>')+'</div>','bad');
+      if(ev.detail)step('<div class="errmsg" style="opacity:.7">技术细节：'+esc(ev.detail)+'</div>');
+      if(ev.done_chapters)step('已定稿的 '+ev.done_chapters+
+        ' 章已保留，可以直接点「续写下一章」接着写。','ok');
+      toast('创作中断：'+String(ev.message||'').split('\n')[0],'err');
+      break;
+  }
+}
+
+/* ───────── 结果面板 ───────── */
+function renderChapter(ch){
+  R.insertAdjacentHTML('beforeend',`
+    <details class="chapter" open>
+      <summary><b>第${ch.index}章 ${esc(ch.title)}</b>
+        <span class="badge ok">重写 ${ch.rounds} 轮</span>
+        ${ch.mock?'<span class="badge mock">Mock 示例文本 · 非真实创作</span>':''}
+        <span style="flex:1"></span>
+        <button type="button" class="mini" onclick="copyChapter(${ch.index},this)">复制本章</button>
+        <button type="button" class="mini" onclick="downloadChapter(${ch.index})">下载</button>
+        <button type="button" class="mini" onclick="readerFeedback(${ch.index},this)">读者反馈</button>
+      </summary>
+      <div class="body">
+        ${ch.comments.map(x=>`<div class="cmt minor">[minor] ${esc(x.issue)} → ${esc(x.suggestion)}</div>`).join('')}
+        <pre>${esc(ch.text)}</pre>
+        <div class="fb" id="fb-${ch.index}"></div>
+      </div>
+    </details>`);
+}
+function copyChapter(idx,btn){
+  const ch=runData.chapters.find(c=>c.index===idx);if(!ch)return;
+  const done=()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制本章',1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ch.text).then(done).catch(()=>legacyCopy(ch.text,done));
+  }else{legacyCopy(ch.text,done);}
+}
+function legacyCopy(text,cb){
+  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';
+  ta.style.opacity='0';document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');cb();}catch(e){toast('复制失败，请手动选中正文复制','err');}
+  ta.remove();
+}
+function downloadChapter(idx){
+  const ch=runData.chapters.find(c=>c.index===idx);if(!ch)return;
+  download(`第${ch.index}章_${ch.title}.md`,'# '+ch.title+'\n\n'+ch.text,'text/markdown');
+}
+function downloadMd(){
+  if(!runData.chapters.length){toast('还没有定稿章节','err');return;}
+  let md='# '+(runData.outline&&runData.outline.title||'未命名')+'\n\n';
+  if(runData.mock)md+='> 注意：本文为 Mock 模式生成的固定示例文本，非真实创作结果。\n\n';
+  runData.chapters.forEach(ch=>md+=`## 第${ch.index}章 ${ch.title}\n\n${ch.text}\n\n`);
+  download('novel_final.md',md,'text/markdown');
+}
+function showOutline(){
+  if(!runData.outline){toast('还没有大纲，先跑一次创作或预览','err');return;}
+  document.getElementById('outlinePanel').style.display='';
+  document.getElementById('outlinePre').textContent=JSON.stringify(runData.outline,null,2);
+}
+async function readerFeedback(idx,btn){
+  const ch=runData.chapters.find(c=>c.index===idx);if(!ch)return;
+  btn.disabled=true;btn.textContent='反馈中…';
+  const f=collectForm();
+  try{
+    const resp=await fetch('/api/reader_feedback',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:ch.text,api_key:f.api_key,base_url:f.base_url,model:f.model,mock:f.mock,thinking:f.thinking})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
+    const data=await resp.json();
+    document.getElementById('fb-'+idx).innerHTML='<div class="cmt reader">👤 读者反馈：'+esc(data.text)+'</div>';
+  }catch(e){toast('读者反馈失败：'+e.message,'err');}
+  finally{btn.disabled=false;btn.textContent='读者反馈';}
+}
+
+/* ───────── 初始化 ───────── */
+(function init(){
+  buildDatalists();
+  initProviders();
+  Object.keys(NAMES).forEach(renderChips);
+  document.getElementById('provider').value='deepseek';   // 默认选中官方，地址留空即可
+  onProviderChange(true);
+  addChar();
+  document.getElementById('rememberKey').checked=true;    // 默认记住 Key（本地单机工具）
+  onMockChange();
+
+  // ① 先恢复 API 配置与表单草稿（浏览器本地存储，刷新就有）
+  const hadLlm=loadLlm();
+  const hadDraft=loadDraft();
+  onMockChange();
+  if(hadLlm||hadDraft)toast('已恢复上次的 API 配置与表单内容','ok');
+
+  // ② 之后任何输入都自动排队保存（防抖，不会每敲一个字就写一次）
+  document.addEventListener('input',autoSave,true);
+  document.addEventListener('change',autoSave,true);
+  window.addEventListener('beforeunload',()=>{try{saveLlm();saveDraft();}catch(e){}});
+
+  // ③ 再恢复上次的创作进度（策划案 / 已定稿章节 / 记忆库，来自服务端存档）
+  restoreSession();
+})();
+</script>
+</body>
+</html>

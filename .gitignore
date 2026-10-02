@@ -1,0 +1,28 @@
+# ── 密钥与环境：绝对不要提交 ──
+.env
+
+# ── 用户创作产物（正文 / 大纲 / 记忆库，属于个人内容）──
+outputs/
+outputs_web/
+
+# ── 历史备份（本地留档即可，见 _backup/README.txt）──
+_backup/
+*.bak
+*.bak_*
+
+# ── 非商用授权字体：已不再被 fonts.css 引用，不进版本库 ──
+# （当前页面用的是思源宋体/黑体，SIL OFL 可商用）
+web/static/fonts/yinpin-hongmengti.ttf
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# ── 编辑器 / 系统 ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
