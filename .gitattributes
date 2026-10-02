@@ -1,0 +1,35 @@
+# Git 属性：统一行尾与文本/二进制识别
+# ─────────────────────────────────────────────────────────────
+# 规则优先级：本文件 > core.autocrlf。
+# 本仓库此前没有 .gitattributes，行尾完全由各人本地的 core.autocrlf 决定，
+# 出现过「索引 LF / 工作区 CRLF / 个别文件 mixed」的隐式状态，排查成本高。
+# 从本文件生效起，行为对所有克隆者一致，不再取决于个人配置。
+
+# ── 默认：按文本处理，仓库内与工作区统一 LF ──
+* text=auto eol=lf
+
+# ── Windows 脚本必须 CRLF ──
+# cmd.exe 解析以 LF 结尾的 .bat/.cmd 在 goto/label 等场景有历史坑，显式保成 CRLF。
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# ── 二进制：显式声明，杜绝任何行尾转换 ──
+# 字体与图片目前只是被 git 内容嗅探"碰巧"识别为二进制（-text），
+# 显式写死之后不再依赖嗅探结果，也不会被 text=auto 误伤。
+*.woff2 binary
+*.woff  binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.xlsx  binary
+*.docx  binary
+*.pptx  binary
