@@ -94,6 +94,30 @@ def _remember(state: Dict[str, Any], out_dir: str) -> None:
     _save_session()
 
 
+def _merge_update(state: Dict[str, Any], delta: Any) -> bool:
+    """把 LangGraph 的一次节点更新并入 state；返回是否真的并进了内容。
+
+    为什么需要这一层：LangGraph 对「一个字段都没写」的节点，在
+    stream_mode="updates" 下上报的是 {node: None}，而不是空字典（1.2.12 实测）。
+    而本项目里「合法的空操作」节点确实存在：
+
+      · chapter_planner_node —— 本章已在策划案范围内时 return {}
+      · memory_settler_node  —— 记忆结算失败、降级放行时 return {}
+
+    于是 state.update(None) 会抛 `TypeError: 'NoneType' object is not iterable`，
+    整条流水线当场断掉。2026-10-02 的实跑正是死在这里：看板刚打出「策划完成」
+    就「出错中断」，run 目录一片空白（一章都没写出来）。
+
+    守卫放在消费端、而不是去改节点的返回值：`return {}` 表示「本次不更新」是
+    正确语义，消费端本来就不该假设 delta 一定是 dict。只要以后还有空操作节点，
+    这个坑就会再出现，而 CLI 走的是 app.invoke，踩不到——所以必须有测试钉住。
+    """
+    if not delta:
+        return False
+    state.update(delta)
+    return True
+
+
 def session_summary() -> Dict[str, Any]:
     """给前端的会话摘要：够恢复界面即可，不带 meta / user_prompt 等大字段。"""
     st = _session.get("state")
@@ -627,7 +651,10 @@ def api_generate(req: GenReq):
 
                         for update in app_graph.stream(state, stream_mode="updates"):
                             for node, delta in update.items():
-                                state.update(delta)
+                                # 空操作节点会上报 {node: None}，不能直接 state.update
+                                # —— 详见 _merge_update 的说明。
+                                if not _merge_update(state, delta):
+                                    continue
                                 if node == "planner":
                                     push({"type": "planner_done", "outline": state["outline"]})
                                     # 策划案一出来就先存盘：后面写正文万一失败，
