@@ -348,6 +348,25 @@ class MockLLM:
                     {"name": "手电筒", "qty": "1 支", "note": "电量不明"},
                 ],
             }, ensure_ascii=False)
+        if "ChapterExtender" in system:
+            # 用 【本章序号】 当锚点取章号：这条 prompt 里到处是「第N章」，
+            # 直接搜 r"第(\d+)章" 会先命中"原案只规划到第 3 章"里的那个数字。
+            m = re.search(r"本章序号】\s*(\d+)", user)
+            idx = int(m.group(1)) if m else 2
+            return json.dumps({
+                "title": f"外延之章·第{idx}夜",
+                "outline": f"第{idx}章：承接上一章结尾继续推进，把核心冲突往前推一步。",
+                "turning_point": "主角做出一个不可逆的选择",
+                "beats": [
+                    {"goal": "承接上一章结尾，交代当下处境",
+                     "conflict": "无", "turn": "环境里透出新信息",
+                     "words": 600, "emotion": 2},
+                    {"goal": "撞上本章的主要阻力",
+                     "conflict": "外部阻碍逼近", "turn": "局面变糟",
+                     "words": 900, "emotion": 4},
+                ],
+                "notes": "",
+            }, ensure_ascii=False)
         # 校对拆成三路并行后，Mock 也要分流（判断顺序：具体的在前）。
         # 只让 OOC 这一路在第一轮打回——三路同时 fail 会让重写轮数行为难以验证。
         if "ReviewerOOC" in system:

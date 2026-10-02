@@ -1,4 +1,4 @@
-"""五个 Agent 节点实现。每个节点 = 读 State → 调 LLM → 写回 State。
+"""各 Agent 节点实现。每个节点 = 读 State → 调 LLM → 写回 State。
 
 P1 变更（对应优化建议 4~9 条）：
 - 策划产物带「场景节拍」，撰稿按节拍推进（第 4 条）
@@ -7,7 +7,13 @@ P1 变更（对应优化建议 4~9 条）：
 - 校对拆成三路并行 specialist，各写各的 state key（第 7 条）
 - 润色环节追加去 AI 腔指令 + 规则层检测（第 8 条）
 - 模型输出统一过 Pydantic（第 9 条，见 models.py）
+
+实跑后的补丁（2026-10-02）：
+- 物资账本 / 必带项上界 / 角色名归一（见 models.py、memory_index.py）
+- 续写超出策划案章数时自动补本章大纲（chapter_planner_node，排在 planner 之后）
 """
+import copy
+
 import config
 import memory_index
 import models
@@ -246,6 +252,75 @@ def planner_node(state: StoryState) -> dict:
             for it in outline.initial_items if it.name.strip()
         ]
     return {"outline": outline.model_dump(), "memory": memory.model_dump()}
+
+
+# ── 1.5 章节大纲补充：本章不在策划案范围内时 ────────────────────
+def chapter_planner_node(state: StoryState) -> dict:
+    """策划案没写到本章时，为本章补一份分章大纲。
+
+    为什么单独做成一个节点，而不是塞进 _chapter_plan()：
+    _chapter_plan() 每章要被调用 7 次（撰稿 1 + 三路校对 3 + 汇合 1 + 润色 1 + 结算 1）。
+    在里面发 LLM 请求，同一章会被规划出好几份互不相同的大纲，还白烧 token。
+    这里只生成一次、写回 outline["chapters"]，后续那 7 次调用就都命中同一份。
+
+    触发场景（2026-10-02 实跑暴露）：需求写着"共3章"，写完第 3 章之后又续写第 4 章，
+    而 outline.chapters 只有 3 条 → _chapter_plan() 走兜底分支，第 4 章
+    既没有标题也没有分章大纲，落盘标题成了 "# 第4章"，正文全靠自由发挥。
+    """
+    outline = state.get("outline") or {}
+    chapters = [c for c in (outline.get("chapters") or []) if isinstance(c, dict)]
+    idx = state.get("chapter_index") or 1
+    # 策划案里已经有这一章 → 什么都不做。
+    # 这条同时是重写循环（bump_round → writer）里重复进入时的快速返回。
+    if any(str(c.get("index")).strip() == str(idx) for c in chapters):
+        return {}
+
+    # 给模型的信息：策划案骨架 + 已定稿章节标题 + 上一章结尾（要接得上）
+    done = state.get("final_chapters") or []
+    titles = "、".join(f"第{c.get('index')}章《{c.get('title')}》" for c in done) or "（尚无）"
+    tail = ""
+    if done:
+        tail = ("\n\n【上一章结尾（本章开头要接得上）】\n"
+                + str(done[-1].get("text") or "")[-600:])
+
+    # 【本章序号】独立成行且不带"第/章"两字，是为了给下面解析用的锚点，
+    # 避免模型（或 mock）从"已规划到第 N 章"里取错章号。
+    # 措辞用"当前共 N 章"而不是"原案 N 章"：chapters 里可能已经含上一章刚补写的条目，
+    # "原本只规划到第 N 章"在补第 3 章时会算成 2，是错的。
+    user_msg = (
+        f"【本章序号】{idx}（策划案当前共 {len(chapters)} 章，本章不在其中）\n"
+        f"【书名】{outline.get('title')}\n"
+        f"【主题】{outline.get('theme')}\n"
+        f"【核心冲突】{outline.get('core_conflict')}\n"
+        f"【结局方向】{outline.get('ending_direction')}\n"
+        f"【已定稿章节】{titles}"
+        f"\n\n请为第 {idx} 章补一份分章大纲 JSON。{tail}")
+    try:
+        raw = llm.chat_json(prompts.CHAPTER_EXTENDER_SYSTEM, user_msg,
+                            temperature=config.TEMPERATURE_PLANNER)
+        chapter = models.Chapter.model_validate(raw)
+    except Exception as e:                              # noqa: BLE001
+        # 补不出大纲也不能拦路——退回原来的兜底（按核心冲突自然推进），但必须让作者知道，
+        # 否则又是"标题悄悄变成《第4章》"那种无声降级。
+        llm.emit_notice(
+            "warn",
+            f"第{idx}章不在策划案范围内（策划案当前共 {len(chapters)} 章），"
+            f"自动补写章节大纲失败（{type(e).__name__}），"
+            f"本章将按核心冲突自然推进，标题暂用「第{idx}章」。"
+            f"原因：{str(e)[:140]}")
+        return {}
+
+    chapter.index = idx          # 模型常漏写 index，必须按实际章号钉死，否则匹配不上
+    if not chapter.title.strip():
+        chapter.title = f"第{idx}章"
+    new_outline = copy.deepcopy(outline)
+    new_outline["chapters"] = chapters + [chapter.model_dump()]
+    llm.emit_notice(
+        "info",
+        f"第{idx}章不在策划案范围内（策划案当前共 {len(chapters)} 章），"
+        f"已自动补写章节大纲《{chapter.title}》"
+        f"（含 {len(chapter.beats)} 个场景节拍），并写回策划案供后续复用。")
+    return {"outline": new_outline}
 
 
 # ── 2. 撰稿 Agent ─────────────────────────────────────────────

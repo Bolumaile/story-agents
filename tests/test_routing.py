@@ -19,8 +19,12 @@ def test_entry_goes_to_planner_when_no_outline():
 
 
 def test_entry_skips_planner_when_outline_exists():
-    """已有策划案（续写）必须直接进 writer，否则每章都重跑策划、白烧钱。"""
-    assert graph_mod.route_entry({"outline": {"title": "已有"}}) == "writer"
+    """已有策划案（续写）必须跳过策划 Agent，否则每章都重跑策划、白烧钱。
+
+    但不能直接进 writer：要先过 chapter_planner 确认本章在不在策划案范围内
+    （超出范围时要补大纲，见 tests/test_chapter_extend.py）。
+    """
+    assert graph_mod.route_entry({"outline": {"title": "已有"}}) == "chapter_planner"
 
 
 # ── ② 校对回退路由 ────────────────────────────────────────────
@@ -54,12 +58,24 @@ def test_bump_revision_round_increments():
 def test_graph_compiles_and_has_expected_nodes():
     app = graph_mod.build_graph()
     assert app is not None
-    for name in ("planner", "writer", "reviewer_ooc", "reviewer_logic",
+    for name in ("planner", "chapter_planner", "writer", "reviewer_ooc", "reviewer_logic",
                  "reviewer_pacing", "merge_reviews", "bump_round",
                  "polisher", "memory_settler"):
         assert name in app.get_graph().nodes, f"缺少节点 {name}"
     # 拆分后不该再有单一的 reviewer 节点
     assert "reviewer" not in app.get_graph().nodes
+
+
+def test_chapter_planner_sits_between_planner_and_writer():
+    """planner → chapter_planner → writer 这条链不能断。
+
+    少了 chapter_planner，续写超出策划案章数时本章就没有大纲，
+    标题会退化成「第N章」——而且不报错，只是内容变糙。
+    """
+    app = graph_mod.build_graph()
+    edges = {(e.source, e.target) for e in app.get_graph().edges}
+    assert ("planner", "chapter_planner") in edges
+    assert ("chapter_planner", "writer") in edges
 
 
 def test_writer_fans_out_to_three_reviewers():
@@ -185,7 +201,11 @@ def test_memory_context_caps_summaries(monkeypatch):
 
 # ── ⑦ 章节计划兜底 ────────────────────────────────────────────
 def test_chapter_plan_falls_back_beyond_outline():
-    """章节数超出策划大纲时，不能崩，要给出"自然推进"的兜底计划。"""
+    """章节数超出策划大纲时，不能崩，要给出"自然推进"的兜底计划。
+
+    注意：这是**最后一道兜底**。正常流程里 chapter_planner_node 会先补齐大纲，
+    轮不到这里（见 tests/test_chapter_extend.py）；只有在补写也失败时才落到这条。
+    """
     st = {"chapter_index": 9, "outline": {"chapters": [{"index": 1, "title": "第一章"}]}}
     plan = nodes._chapter_plan(st)
     assert plan["index"] == 9
