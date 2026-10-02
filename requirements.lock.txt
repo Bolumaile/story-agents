@@ -1,7 +1,7 @@
 # 由 pip freeze 生成的精确版本清单，用于完全复现本机已验证过的环境。
-# 重新生成：pip freeze > requirements.lock.txt
+# 重新生成：pip freeze > requirements.lock.txt（生成后记得把本段注释加回来）
 # 说明：python-dotenv 是 langchain 的传递依赖，本项目并未直接使用它
-#       （config.py 用自带的 12 行解析读 .env，零依赖）。
+#       （config.py 用自带解析读 .env，零依赖）。
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
