@@ -41,8 +41,31 @@ MAX_CHAPTERS_PER_RUN = 10   # 单次运行章节数上限（防误填几十章�
 # 原来 _session 只活在进程内存里：关掉黑窗口（或电脑重启）后，策划案、记忆库、
 # 已定稿章节全部丢失，「续写下一章」直接报「没有可续写的会话」，用户只能从头再来。
 # 现在把 State 存成 outputs_web/_session.json，服务重启时自动读回。
-OUTPUTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "outputs_web"))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs_web")
 SESSION_PATH = os.path.join(OUTPUTS_DIR, "_session.json")
+
+
+def _display_dir(path: Optional[str]) -> Optional[str]:
+    """把产物目录转成「相对项目根」的展示用路径。
+
+    为什么不在界面上显示绝对路径：它含盘符与 Windows 用户名
+    （`E:\\...\\<用户名>\\...`），而这一行最容易出现在截图、issue 与 README 里
+    —— 本项目的界面截图就是这么外泄的。程序按约定必须在项目根启动，
+    从项目根找 `outputs_web/run_xxx/` 不会有歧义，展示相对路径足够。
+    磁盘上真正用的仍是绝对路径，只有下发给前端的这份是相对的。
+    """
+    if not path:
+        return None
+    abs_path = os.path.abspath(path)
+    try:
+        rel = os.path.relpath(abs_path, PROJECT_ROOT)
+    except ValueError:                      # 跨盘符时 relpath 会抛
+        return os.path.basename(abs_path)
+    if rel.startswith(".."):                # 不在项目内：只报最后一级，不外泄完整路径
+        return os.path.basename(abs_path) or "."
+    return rel.replace("\\", "/") + "/"
+
 
 
 def _save_session() -> None:
@@ -131,7 +154,7 @@ def session_summary() -> Dict[str, Any]:
     return {
         "has_session": True,
         "saved_at": _session.get("saved_at"),
-        "out_dir": _session.get("out_dir"),
+        "out_dir": _display_dir(_session.get("out_dir")),
         "outline": st.get("outline") or {},
         "memory": st.get("memory") or {},
         "chapters": chapters,
@@ -702,7 +725,7 @@ def api_generate(req: GenReq):
                     # 保存会话供续写（包含策划案 / 记忆 / 已定稿章节）
                     _remember(state, out_dir)
 
-                    push({"type": "all_done", "out_dir": os.path.abspath(out_dir),
+                    push({"type": "all_done", "out_dir": _display_dir(out_dir),
                           "memory": state.get("memory") or {},
                           "outline": state["outline"],
                           "mock": req.mock,

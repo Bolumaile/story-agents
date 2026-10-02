@@ -45,11 +45,16 @@ python main.py --prompt "测试" --chapters 2 --mock
 > 环境变量优先级：**真实环境变量 > `.env` > `config.py` 默认值**。
 > 全部可用变量与取舍说明见 `.env.example`。
 > 注意：网页端下拉里选好平台与模型后，`DEEPSEEK_MODEL` 就不再生效。
+>
+> **Windows 双击启动**：仓库里带一个 `start.bat`，它会按「本机 WorkBuddy 内置 Python →
+> 其版本目录 → PATH 里的 `python`」的顺序找解释器，找不到会提示，然后自动补装依赖并起服务。
+> 它优先找的那几个目录属于作者本机环境，你没有 WorkBuddy 也没关系——
+> 只要 `python` 在 PATH 里就会走最后一条分支。**必须在项目根目录启动**。
 
 ## 开发与测试
 
 ```bash
-python -m pytest      # 230 项，全部离线，约 2.9 秒
+python -m pytest      # 236 项，全部离线，约 2.9 秒
 ```
 
 测试不联网、不烧 token：`MockLLM` 能跑通整条流水线，JSON 修复链与规则层检测都是纯字符串处理。
@@ -65,6 +70,7 @@ python -m pytest      # 230 项，全部离线，约 2.9 秒
 | `test_models.py` | Pydantic 归一：缺字段、类型强转、中文枚举收敛、物资与设定状态归一、角色名归一、告警去重 |
 | `test_memory_index.py` | 中文 bigram 分词、FTS5 检索命中、单字虚词过滤、无索引时降级 |
 | `test_style_check.py` | 套话/句长/比喻/收束句各自判据与样本量门槛 |
+| `test_display_dir.py` | 产物目录的展示路径：项目内转相对路径、跨盘/项目外只留最后一级，**保证界面不下发盘符与用户名** |
 
 降级路径均已单独构造用例：校对单路超时只跳过该路、三路都无 critical 转 pass、
 记忆结算失败不中断、检索不可用时退回「必带项 + 最近 k 章」。
@@ -219,7 +225,7 @@ story-agents/
 ├── web/
 │   ├── server.py      # FastAPI + SSE 进度推送 + 会话落盘/恢复
 │   └── static/index.html  # 表单页（人物卡动态增删、本机记忆）
-├── tests/             # pytest 测试集（离线，230 项，约 2.9 秒）
+├── tests/             # pytest 测试集（离线，236 项，约 2.9 秒）
 ├── docs/
 │   ├── 优化建议-对比同类项目.md   # 横向调研：能力矩阵 + P0–P3 清单
 │   └── images/        # README 截图
