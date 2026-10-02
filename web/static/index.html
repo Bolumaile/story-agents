@@ -1348,8 +1348,14 @@ function handle(ev){
     case 'review':{
       if(ev.verdict==='fail'){
         const c=ev.comments||[];
-        doneCur('⚠ 校对不通过：'+c.length+' 个严重问题 → 打回重写','bad');
-        c.forEach(x=>step('<div class="cmt">['+esc(x.from||x.type)+'] 「'+esc(x.quote)+'」 '+
+        // comments 是 critical + minor 的合并结果（且已按严重度排序、critical 在前）。
+        // 这里必须分开计数：标题里的「严重问题」只能是 critical，
+        // 否则 minor 会被一并算成严重，条数虚高、轻重不分。
+        const crit=c.filter(x=>x.severity==='critical'), nMinor=c.length-crit.length;
+        doneCur('⚠ 校对不通过：'+crit.length+' 个严重问题'+
+          (nMinor?'（另有 '+nMinor+' 条建议）':'')+' → 打回重写','bad');
+        c.forEach(x=>step('<div class="cmt'+(x.severity==='minor'?' minor':'')+'">['+
+          esc(x.from||x.type)+'] 「'+esc(x.quote)+'」 '+
           esc(x.issue)+' → '+esc(x.suggestion)+'</div>'));
         cur=step('✍ 撰稿 Agent：定向重写中（不推翻全文）…','on');
       }else{
