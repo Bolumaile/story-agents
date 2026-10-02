@@ -1,7 +1,14 @@
-# 由 pip freeze 生成的精确版本清单，用于完全复现本机已验证过的环境。
-# 重新生成：pip freeze > requirements.lock.txt（生成后记得把本段注释加回来）
-# 说明：python-dotenv 是 langchain 的传递依赖，本项目并未直接使用它
-#       （config.py 用自带解析读 .env，零依赖）。
+# 环境锁定文件 —— 由 pip freeze 生成，精确到补丁版本，用于完全复现已验证环境。
+#
+#   重建：python -m pip freeze > requirements.lock.txt
+#         （该命令会清掉本表头，生成后请手工粘回）
+#   安装：python -m pip install -r requirements.lock.txt
+#
+# 内容说明：包含运行时依赖 + 测试依赖（pytest）——二者共用同一个 venv。
+# 只想跑程序、不跑测试时，用 requirements.txt 即可。
+#
+# 生成时间：2026-10-02
+# ---------------------------------------------------------------------------
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1

@@ -174,3 +174,25 @@ story-agents/
 
 4. 人物是提示词级约束（人设卡+禁忌+快照），非独立 agent
 5. `config` 为进程级单例，网页端同一时间只支持一个生成任务（已加锁）
+
+## 许可与致谢
+
+**本项目代码采用 MIT License**，版权 © 2026 Bolumaile。你可以自由使用、修改、
+再分发、闭源商用，只需在副本中保留版权声明与许可原文。详见 [`LICENSE`](LICENSE)。
+
+### 第三方资源
+
+- **字体**：`web/static/fonts/` 下的三款字体（思源黑体 / 思源宋体 / 拉丁 Noto Serif，
+  共 210 个 woff2 分片）采用 **SIL Open Font License 1.1**，**不适用**上述 MIT 许可。
+  版权分属 Adobe 与 The Noto Project Authors；完整许可原文、各字体版权行与版本号见
+  [`web/static/fonts/LICENSE-OFL.txt`](web/static/fonts/LICENSE-OFL.txt)。
+
+  OFL 允许商用与再分发，但要求随字体保留版权声明与许可文本。该文件**必须随
+  `fonts/` 目录一同分发**，请勿删除或单独摘出字体文件使用。
+
+- **运行依赖**：LangGraph、FastAPI、OpenAI SDK 等，均为宽松许可
+  （MIT / Apache-2.0 / BSD），精确版本见 `requirements.lock.txt`。
+
+> ⚠️ `web/static/fonts/yinpin-hongmengti.ttf`（印品鸿蒙体）为**非商用授权**字体，
+> 已列入 `.gitignore`、不随仓库分发，代码与 CSS 中也不再引用。请勿将其用于商业用途，
+> 发布前建议从本地直接删除。

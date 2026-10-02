@@ -10,3 +10,6 @@ pytest>=8.0
 
 # 精确版本（含全部传递依赖）见 requirements.lock.txt，
 # 想完全复现环境就用它：pip install -r requirements.lock.txt
+#
+# 注意：lock 文件由 `python -m pip freeze > requirements.lock.txt` 生成，
+# 该命令会清掉文件里原有的表头注释，生成后需手工把表头粘回去。
