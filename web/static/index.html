@@ -374,6 +374,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <button id="genBtn" onclick="generate('new')">开始创作</button>
     <button id="contBtn" class="ghost" onclick="generate('continue')" disabled>续写下一章</button>
     <button id="previewBtn" class="ghost" onclick="previewOutline()">只预览大纲</button>
+    <button id="stopBtn" class="ghost" style="display:none" onclick="stopGenerate()"
+      title="让流水线在本章结束后停下；已定稿的章节会完整保留">■ 停止生成</button>
     <span class="grow"></span>
     <button type="button" class="mini" id="unlockBtn" style="display:none" onclick="setFormLocked(false)">解锁表单</button>
   </div>
@@ -561,7 +563,16 @@ async function restoreSession(){
 function newStory(){
   askConfirm('开始一个新故事？\n\n本页已有的章节、大纲与记忆库会被清空，之后无法再「续写」这一篇。\n'
     +'（已经写好的 md / json 文件仍保存在 outputs_web 里，不会被删除。）',async()=>{
-    try{await fetch('/api/session/clear',{method:'POST'});}catch(e){}
+    // 正在生成时后端会返回 409（旧会话会被 worker 的自动存档"复活"，属于竞态）。
+    // 这时**不能**清空页面：否则页面看起来是新的，服务端存档却还在，两边不一致。
+    try{
+      const resp=await fetch('/api/session/clear',{method:'POST'});
+      if(!resp.ok){
+        const e=await resp.json().catch(()=>({detail:resp.statusText}));
+        toast('暂时不能新建：'+(e.detail||resp.statusText),'err');
+        return;
+      }
+    }catch(e){toast('新建失败：请求没发出去（服务是不是停了？）','err');return;}
     hasSession=false;
     runData={outline:null,chapters:[],memory:null,mock:false};
     document.getElementById('result').innerHTML='';
@@ -757,6 +768,14 @@ const CHAR_LIST={personality:'dl-personality',speech:'dl-speech',motivation:'dl-
 
 function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+/* 剥掉正文开头的一级标题 —— 与后端 products.strip_leading_h1 同一套规则。
+   润色输出（final_chapter）正文里本来就带一个「# 第N章 标题」，页面导出时再拼一次
+   就会出现两行标题（服务端落盘的同名 bug 已修，导出这条路当时漏了）。 */
+function stripLeadingH1(t){
+  const s=String(t==null?'':t);
+  const m=s.match(/^[ \t]*#[ \t]+[^\n]*/);
+  return (m?s.slice(m[0].length):s).replace(/^\s+/,'');
+}
 function pickRandom(arr,n){
   const a=arr.slice(),out=[];
   while(out.length<n&&a.length){out.push(a.splice(Math.floor(Math.random()*a.length),1)[0]);}
@@ -1247,6 +1266,40 @@ function setFormLocked(locked){
 }
 
 /* ───────── 生成 / 续写 / 预览 ───────── */
+/* 生成期间的状态与「停止」控制。
+   为什么要做停止：worker 是 daemon 线程，且浏览器断开**不会**通知它 ——
+   关掉页面后它依然会把剩下的章节一章一章跑完，继续烧 token，而期间再点
+   「生成」会一直阻塞。后端加了取消信号（/api/generate/stop），前端这里给出入口。 */
+let evtCtl=null,stopRequested=false;
+function setRunningUI(on,label){
+  running=on;
+  const gen=document.getElementById('genBtn'),cont=document.getElementById('contBtn'),
+        pv=document.getElementById('previewBtn'),stop=document.getElementById('stopBtn');
+  gen.disabled=on;cont.disabled=on||!runData.chapters.length;pv.disabled=on;
+  if(stop){stop.style.display=on?'':'none';stop.disabled=false;stop.textContent='■ 停止生成';}
+  gen.textContent=on?(label||'创作中…'):'开始创作';
+}
+/* 停止是两段式的：
+   第一次点击 = 请求停止（后端只在**章与章之间**检查，当前这一章的模型调用
+   没法中途掐断，所以要跑完）；第二次点击 = 强制断开连接，立刻把界面还给你。
+   两种都会让后端在本章结束后收工，已定稿的章节一律保留。 */
+function stopGenerate(){
+  if(!running)return;
+  const btn=document.getElementById('stopBtn');
+  if(!stopRequested){
+    stopRequested=true;
+    if(btn)btn.textContent='■ 强制断开';
+    fetch('/api/generate/stop',{method:'POST'}).catch(()=>{});
+    flow('已请求停止：等当前这一章收尾…');
+    step('■ <b>已请求停止</b>：当前这一章会跑完再停（正在进行的模型调用无法中途掐断），'
+      +'之后不再开始新的一章，已定稿的内容全部保留。<br>'
+      +'不想等就再点一次「<b>强制断开</b>」，页面会立刻恢复可用，'
+      +'后端在本章跑完后自行收工。','bad');
+    return;
+  }
+  if(btn){btn.disabled=true;btn.textContent='正在断开…';}
+  try{evtCtl&&evtCtl.abort();}catch(e){}
+}
 async function generate(mode){
   if(running)return;
   const f=collectForm();
@@ -1276,10 +1329,10 @@ async function startGenerate(mode,f){
   runData=cont0
     ? {outline:runData.outline,chapters:runData.chapters.slice(),memory:runData.memory,mock:f.mock}
     : {outline:null,chapters:[],memory:null,mock:f.mock};
-  running=true;
-  const gen=document.getElementById('genBtn'),cont=document.getElementById('contBtn'),pv=document.getElementById('previewBtn');
-  gen.disabled=cont.disabled=pv.disabled=true;
-  gen.textContent=mode==='continue'?'续写中…':'创作中…';
+  stopRequested=false;
+  evtCtl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const gen=document.getElementById('genBtn'),pv=document.getElementById('previewBtn');
+  setRunningUI(true,mode==='continue'?'续写中…':'创作中…');
   P.innerHTML='';F.innerHTML='';cur=null;boardOpen();
   if(!cont0)R.innerHTML='';
   document.getElementById('memoryCard').style.display='';
@@ -1292,23 +1345,34 @@ async function startGenerate(mode,f){
       const m=parseMemory();
       if(m)body.memory_override=m;
     }
-    const resp=await fetch('/api/generate',{method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const opt={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+    if(evtCtl)opt.signal=evtCtl.signal;
+    const resp=await fetch('/api/generate',opt);
     if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'请求失败');}
     await readSSE(resp);
   }catch(e){
     const m=(e&&e.message)?e.message:String(e);
-    if(cur)doneCur('⚠ 连接中断','bad');
-    flow('已停止');
-    step('<b>⚠ '+(/network|Failed to fetch|Load failed|fetch/i.test(m)
-        ?'和后端的连接断了':'出错')+'</b><div class="errmsg">'+esc(m)+'</div>'+
-      '<div class="errmsg" style="margin-top:6px">若下方没有具体说明，请查看运行服务的黑色窗口里的报错。'+
-      '常见原因：某一步调用模型失败或超时。</div>','bad');
-    toast('创作失败：'+m,'err');
+    const aborted=(e&&e.name==='AbortError')||/abort/i.test(m);
+    if(aborted&&stopRequested){
+      // 用户自己点的「强制断开」，不是故障，别说成"创作失败"
+      if(cur)doneCur('■ 已断开','');
+      flow('已断开连接（后端会在本章结束后收工）');
+      step('<b>已断开</b>：后端会在当前这一章跑完后停下，已定稿的章节都已落盘。'
+        +'可以点「续写下一章」接着写。','ok');
+      toast('已断开连接','ok');
+    }else{
+      if(cur)doneCur('⚠ 连接中断','bad');
+      flow('已停止');
+      step('<b>⚠ '+(/network|Failed to fetch|Load failed|fetch/i.test(m)
+          ?'和后端的连接断了':'出错')+'</b><div class="errmsg">'+esc(m)+'</div>'+
+        '<div class="errmsg" style="margin-top:6px">若下方没有具体说明，请查看运行服务的黑色窗口里的报错。'+
+        '常见原因：某一步调用模型失败或超时。</div>','bad');
+      toast('创作失败：'+m,'err');
+    }
   }
   finally{
-    running=false;gen.disabled=false;cont.disabled=!runData.chapters.length;
-    pv.disabled=false;gen.textContent='开始创作';
+    setRunningUI(false);
+    stopRequested=false;evtCtl=null;
   }
 }
 async function previewOutline(){
@@ -1336,23 +1400,52 @@ function parseMemory(){
   try{return JSON.parse(t);}
   catch(e){toast('记忆库 JSON 格式有误，已忽略修改；请检查逗号与引号','err');return null;}
 }
-function applyMemoryEdit(){
+/* 保存记忆修改。以前这里只改一句提示文字：既不写 localStorage、也不回写服务端，
+   刷新页面就被服务端存档里的旧值覆盖回去——按钮文案与行为不符。
+   现在真的把编辑结果 POST 到服务端写入 _session.json，并如实回报结果。 */
+async function applyMemoryEdit(){
+  const hint=document.getElementById('memoryHint');
   const m=parseMemory();
-  document.getElementById('memoryHint').textContent=m?'已保存，续写时生效':'未保存（格式有误）';
+  if(!m){hint.textContent='未保存（格式有误）';return;}
+  runData.memory=m;                     // 即便服务端保存失败，本次「续写」也会用它
+  hint.textContent='保存中…';
+  try{
+    const resp=await fetch('/api/session/memory',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({memory:m})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));
+      throw new Error(e.detail||'请求失败');}
+    const d=await resp.json();
+    hint.textContent='已保存到服务端'+(d.saved_at?('（存档于 '+d.saved_at+'）'):'')+'，续写时生效';
+    toast('记忆库已保存','ok');
+  }catch(e){
+    hint.textContent='服务端保存失败：'+e.message+'（本次续写仍会用你刚编辑的内容）';
+    toast('记忆库保存失败：'+e.message,'err');
+  }
 }
 
 /* ───────── SSE 解析与事件处理 ───────── */
 async function readSSE(resp){
   const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
-  while(true){
-    const{done,value}=await reader.read();
-    if(done)break;
-    buf+=dec.decode(value,{stream:true});
-    let i;
-    while((i=buf.indexOf('\n\n'))>=0){
-      const chunk=buf.slice(0,i);buf=buf.slice(i+2);
-      if(chunk.startsWith('data: '))handle(JSON.parse(chunk.slice(6)));
+  try{
+    while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let i;
+      while((i=buf.indexOf('\n\n'))>=0){
+        const chunk=buf.slice(0,i);buf=buf.slice(i+2);
+        if(!chunk.startsWith('data: '))continue;
+        let ev=null;
+        // 半截帧（连接被掐断、代理截断）会让 JSON.parse 抛错。以前这个异常会一路
+        // 冒到上层，被报成「创作失败」，误导用户以为模型出错——其实只是丢了一帧。
+        try{ev=JSON.parse(chunk.slice(6));}catch(e){continue;}
+        handle(ev);
+      }
     }
+  }finally{
+    // 无论正常结束、用户点停止、还是连接断了，都释放 reader 的锁并取消底层流，
+    // 否则 fetch body 会一直被占着（无法复用连接，也收不到真正的取消信号）。
+    try{reader.releaseLock();}catch(e){}
   }
 }
 function handle(ev){
@@ -1440,6 +1533,22 @@ function handle(ev){
       if(ev.mock)step('<b>注意</b>：本次为 Mock 模式，正文是固定示例文本，'+
         '仅供验证流程。要写真实作品请取消勾选 Mock 并填 API Key。','bad');
       break;
+    case 'stopped':{
+      // 用户点了「停止生成」：后端在章与章之间退出。已定稿的章节都已落盘，
+      // 记忆库 / 大纲也照常回传，所以这里与 all_done 一样恢复会话状态。
+      setRunningUI(false);
+      if(ev.memory){runData.memory=ev.memory;
+        document.getElementById('memoryBox').value=JSON.stringify(ev.memory,null,2);}
+      if(ev.outline)runData.outline=ev.outline;
+      document.getElementById('memoryHint').textContent='';
+      if(ev.out_dir)document.getElementById('outDirHint').textContent='产物目录：'+ev.out_dir;
+      document.getElementById('contBtn').disabled=!runData.chapters.length;
+      if(!cur)cur=null;else doneCur('■ 已按要求停止','');
+      flow('已停止，共 '+ev.total_chapters+' 章定稿');
+      step('<b>已按你的要求停止</b>：共 '+ev.total_chapters+' 章定稿，产物已保存到 '
+        +esc(ev.out_dir||'')+'。可以直接点「续写下一章」接着写。','ok');
+      toast('已停止，保留 '+ev.total_chapters+' 章','ok');
+      break;}
     case 'error':
       if(cur)doneCur('⚠ 流水线中断','bad');
       flow('已中断'+(ev.done_chapters?('，已完成 '+ev.done_chapters+' 章'):''));
@@ -1492,13 +1601,13 @@ function legacyCopy(text,cb){
 }
 function downloadChapter(idx){
   const ch=runData.chapters.find(c=>c.index===idx);if(!ch)return;
-  download(`第${ch.index}章_${ch.title}.md`,'# '+ch.title+'\n\n'+ch.text,'text/markdown');
+  download(`第${ch.index}章_${ch.title}.md`,'# '+ch.title+'\n\n'+stripLeadingH1(ch.text),'text/markdown');
 }
 function downloadMd(){
   if(!runData.chapters.length){toast('还没有定稿章节','err');return;}
   let md='# '+(runData.outline&&runData.outline.title||'未命名')+'\n\n';
   if(runData.mock)md+='> 注意：本文为 Mock 模式生成的固定示例文本，非真实创作结果。\n\n';
-  runData.chapters.forEach(ch=>md+=`## 第${ch.index}章 ${ch.title}\n\n${ch.text}\n\n`);
+  runData.chapters.forEach(ch=>md+=`## 第${ch.index}章 ${ch.title}\n\n${stripLeadingH1(ch.text)}\n\n`);
   download('novel_final.md',md,'text/markdown');
 }
 function showOutline(){

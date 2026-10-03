@@ -169,8 +169,18 @@ def _trim_dangling_tail(s: str) -> str:
         s = new
 
 
-def _close_braces(s: str) -> str:
-    """扫描一遍，补齐未闭合的括号（先处理未闭合的引号与悬空尾巴）。"""
+def _close_braces(s: str) -> tuple:
+    """扫描一遍，补齐未闭合的括号（先处理未闭合的引号与悬空尾巴）。
+
+    返回 `(补全后的文本, 最后一个顶层逗号的位置)`。
+
+    为什么要返回元组而不是把位置挂成函数属性：三路校对（人物/逻辑/节奏）是
+    在同一进程的**不同线程**里并行跑的，全都会走 `parse_json` → 这里。
+    挂成 `_close_braces.last_comma` 等于用一个进程级全局槽位传值——
+    线程 A 刚写完、还没读走，线程 B 就覆写了它，A 于是拿着 B 的索引去截断，
+    轻则丢掉一个候选（该路校对静默跳过），重则截出"结构错但恰好能解析"的
+    JSON。而这个窗口只有并发时才出现，单线程测试永远覆盖不到。
+    """
     stack, in_str, i, n = [], False, 0, len(s)
     last_comma = None
     while i < n:
@@ -199,8 +209,7 @@ def _close_braces(s: str) -> str:
     out = _trim_dangling_tail(out)
     while stack:
         out += stack.pop()
-    _close_braces.last_comma = last_comma          # 供回退方案使用
-    return out
+    return out, last_comma
 
 
 def _salvage_objects(text: str) -> dict:
@@ -218,7 +227,7 @@ def _salvage_objects(text: str) -> dict:
     got = []
     for m in re.finditer(r"\{[^{}]*\}", text):
         seg = m.group(0)
-        for candidate in (seg, _close_braces(_fix_stray_quotes(seg))):
+        for candidate in (seg, _close_braces(_fix_stray_quotes(seg))[0]):
             try:
                 obj = json.loads(candidate)
             except Exception:                       # noqa: BLE001
@@ -266,12 +275,13 @@ def parse_json(text: str) -> dict:
     for raw in list(candidates):
         candidates.append(_fix_stray_quotes(raw))
     for raw in list(candidates):
-        closed = _close_braces(raw)
+        # 补全括号，并把"最后一个顶层逗号"作为局部变量接住（见 _close_braces 的说明：
+        # 以前挂在函数属性上，三路校对并发时会互相覆写）
+        closed, cut = _close_braces(raw)
         candidates.append(closed)
         # 截断回退：从该候选的最后一个逗号处截断，丢掉半截元素再补全
-        cut = _close_braces.last_comma
         if cut:
-            candidates.append(_close_braces(raw[:cut]))
+            candidates.append(_close_braces(raw[:cut])[0])
 
     for cand in candidates:
         try:

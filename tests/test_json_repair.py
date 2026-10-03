@@ -181,3 +181,80 @@ def test_salvage_picks_summary_key():
 
 def test_salvage_on_garbage_returns_empty():
     assert _salvage_objects("完全不是 JSON") == {}
+
+
+# ── ⑥ 并发安全：修复链不许有跨线程的共享槽位（P0-2）─────────────
+# 缺陷回顾：`_close_braces` 曾把「最后一个顶层逗号的位置」挂在**函数对象属性**
+# 上（`_close_braces.last_comma`）当全局槽位传值。三路校对（人物/逻辑/节奏）
+# 在同一进程的不同线程里并行跑，全都会走 parse_json → _close_braces：
+# 线程 A 刚写完、还没读走，线程 B 就覆写了它 → A 用错误的索引截断，
+# 轻则丢掉一个候选（该路校对被静默跳过），重则截出"结构错但恰好能解析"的 JSON。
+# 单线程测试永远覆盖不到这条路，所以这里显式并发地把解析结果对一遍。
+
+def test_close_braces_has_no_shared_state_between_calls():
+    """返回值里带出逗号位置，且不再往函数对象上挂属性。"""
+    from llm import _close_braces
+
+    # 只写了半截的第二个元素会被 _trim_dangling_tail 去掉，尾巴补上 }
+    out, cut = _close_braces('{"a": 1, "b":')
+    assert out == '{"a": 1}'
+    assert cut == 7 and '{"a": 1, "b":'[cut] == ","      # 2 元组回传，不是函数属性
+    assert not hasattr(_close_braces, "last_comma"), \
+        "函数属性全局槽位又回来了：多线程下会互相覆写"
+
+
+def test_parse_json_under_threads_returns_each_inputs_own_result():
+    """8 线程各拿一份不同内容反复解析，结果必须只跟自己那份输入有关。"""
+    import threading
+
+    # 每份输入都是"残缺 JSON"，必须走修复链（只有走修复链才会碰逗号回退）
+    cases = [(f'{{"verdict": "fail", "comments": [{{"issue": "问题{i}", "suggestion": "改{i}"',
+              f"问题{i}", f"改{i}") for i in range(8)]
+
+    errors, results = [], {}
+
+    def work(i, raw, issue, suggestion):
+        try:
+            for _ in range(60):
+                data = parse_json(raw)
+                got = data["comments"][0]
+                assert got["issue"] == issue, f"第 {i} 号输入解析出了别人的内容：{got}"
+                assert got["suggestion"] == suggestion
+            results[i] = True
+        except Exception as e:                    # noqa: BLE001
+            errors.append(f"{i}: {type(e).__name__}: {e}")
+
+    threads = [threading.Thread(target=work, args=(i, raw, issue, sug))
+               for i, (raw, issue, sug) in enumerate(cases)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    assert len(results) == len(cases)
+
+
+def test_parse_json_concurrent_broken_and_valid_mix():
+    """并发混合：合法 JSON 与各种残缺形态一起跑，谁都不许被邻居带偏。"""
+    import threading
+
+    good = '{"verdict": "pass", "comments": []}'
+    broken = '{"verdict": "fail", "comments": [{"issue": "断在这里'
+    errors = []
+
+    def work(raw, expect_verdict):
+        try:
+            for _ in range(80):
+                assert parse_json(raw)["verdict"] == expect_verdict
+        except Exception as e:                    # noqa: BLE001
+            errors.append(f"{raw[:20]}: {type(e).__name__}: {e}")
+
+    threads = ([threading.Thread(target=work, args=(good, "pass")) for _ in range(4)]
+               + [threading.Thread(target=work, args=(broken, "fail")) for _ in range(4)])
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors

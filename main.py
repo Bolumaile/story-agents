@@ -12,45 +12,35 @@
 
 输出：
   outputs/outline.json                    策划案
+  outputs/memory.json                     故事记忆库（伏笔/人物/物资/设定）
   outputs/chapter_01.md ...               各章定稿
   outputs/final.md                        全书合稿
 """
 import argparse
-import json
 import os
 import sys
 
 import config
 import llm
 import graph as graph_mod
+import products
+import state as state_mod
 from state import StoryState
 
 
 def build_initial_state(args) -> StoryState:
+    """命令行参数 → 初始 State。
+
+    真正的字段清单在 `state.new_state` 里（与网页端共用一份），这里只负责
+    解析 --prompt / --prompt-file。
+    """
     prompt = args.prompt
     if args.prompt_file:
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read().strip()
     if not prompt:
         sys.exit("错误：--prompt 与 --prompt-file 至少提供一个")
-    return StoryState(
-        user_prompt=prompt,
-        outline={},
-        chapter_index=1,
-        chapter_draft="",
-        review_comments=[],
-        review_verdict="pass",
-        # 三路并行校对：每路各写各的 key
-        review_comments_ooc=[],
-        review_comments_logic=[],
-        review_comments_pacing=[],
-        style_report={},
-        revision_round=0,
-        final_chapter="",
-        meta={},
-        memory={},
-        final_chapters=[],
-    )
+    return state_mod.new_state(prompt)
 
 
 def main():
@@ -79,42 +69,24 @@ def main():
 
     # ── 逐章流水线：入口路由保证策划只在第一章前跑一次 ──
     for idx in range(1, args.chapters + 1):
-        state.update({
-            "chapter_index": idx,
-            "chapter_draft": "",
-            "review_comments": [],
-            "review_verdict": "pass",
-            # 三路 specialist 各写各的 key，必须随章清空，
-            # 否则上一章的意见会漏进下一章的合并结果里
-            "review_comments_ooc": [],
-            "review_comments_logic": [],
-            "review_comments_pacing": [],
-            "style_report": {},
-            "revision_round": 0,
-            "final_chapter": "",
-        })
+        # 每章重置的字段清单与网页端共用一份（state.reset_chapter_fields），
+        # 免得两边各写一遍、漏改一处就把上一章的校对意见串进下一章。
+        state.update(state_mod.reset_chapter_fields(idx))
         state = graph_mod.run_chapter(app, state)
 
         outline = state["outline"]
-        with open(os.path.join(args.out, "outline.json"), "w", encoding="utf-8") as f:
-            json.dump(outline, f, ensure_ascii=False, indent=2)
-        with open(os.path.join(args.out, "memory.json"), "w", encoding="utf-8") as f:
-            json.dump(state.get("memory") or {}, f, ensure_ascii=False, indent=2)
+        title = state["final_chapters"][-1]["title"]
+
+        # outline / memory / chapter_XX.md / final.md 全部走同一个原子写入入口。
+        # 顺带治掉「双标题」：程序拼的标题与正文自带的一级标题只留一个。
+        products.write_chapter_products(args.out, state)
 
         rounds = state.get("revision_round", 0)
         n_comments = len(state.get("review_comments") or [])
-        title = state["final_chapters"][-1]["title"]
         path = os.path.join(args.out, f"chapter_{idx:02d}.md")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n{state['final_chapter']}\n")
         print(f"[第{idx}章] 《{title}》 定稿｜重写 {rounds} 轮｜"
-              f"遗留 minor 意见 {n_comments} 条 → {path}")
+              f"遗留 minor 意见 {n_comments} 条（策划案：《{outline.get('title')}》）→ {path}")
 
-    # ── 合稿 ──
-    with open(os.path.join(args.out, "final.md"), "w", encoding="utf-8") as f:
-        f.write(f"# {state['outline'].get('title')}\n\n")
-        for ch in state["final_chapters"]:
-            f.write(f"## 第{ch['index']}章 {ch['title']}\n\n{ch['text']}\n\n")
     print(f"[完成] 全书合稿 → {os.path.join(args.out, 'final.md')}")
 
 

@@ -467,10 +467,18 @@ def _review_cards(state: StoryState) -> str:
 
 
 def _run_review(state: StoryState, plan: dict, system: str,
-                sections: list) -> list:
-    """跑一路校对，返回规整后的 comments（失败按 fail-open 策略返回空）。
+                sections: list) -> tuple:
+    """跑一路校对，返回 `(comments, verdict)`。
 
     三路共用这段：它们只在「问什么」上不同，解析、容错、降级策略完全一致。
+
+    `verdict` 必须一起带出来。以前这里只取 `comments`，把模型明确给出的
+    `verdict` 整条丢掉——而 `llm._salvage_objects` 还专门从残缺 JSON 里
+    把 `"verdict":"fail"` 抢救出来。结果是：模型判「不合格、要重写」的章节，
+    只要 comments 没解析出来就被静默放行，用户侧连个警告都没有。
+
+    返回空串 `""` 表示「这一路本次没跑成」（fail-open 跳过），它**不等于 pass**，
+    也不该被当成 fail —— 合并节点按"未表态"处理。
     """
     user_msg = "\n\n".join(
         [s for s in sections if s] + [
@@ -490,8 +498,11 @@ def _run_review(state: StoryState, plan: dict, system: str,
             f"第{plan['index']}章有一路校对结果无法解析（{type(e).__name__}），"
             f"该维度本次跳过；其余维度照常工作，章节继续进入润色。"
             f"原因：{str(e)[:140]}")
-        return []
-    return models.dump(models.parse_comments(result.get("comments")))
+        return [], ""
+    verdict = str(result.get("verdict") or "").strip().lower()
+    if verdict not in ("pass", "fail"):
+        verdict = ""                                  # 模型没写清楚 → 未表态
+    return models.dump(models.parse_comments(result.get("comments"))), verdict
 
 
 def reviewer_ooc_node(state: StoryState) -> dict:
@@ -504,8 +515,8 @@ def reviewer_ooc_node(state: StoryState) -> dict:
         f"【本章应写内容】第{plan.get('index')}章：{plan.get('outline', '')}",
         "\n".join(_meta_sections(state, "reviewer")),
     ]
-    return {"review_comments_ooc": _run_review(
-        state, plan, prompts.REVIEWER_OOC_SYSTEM, sections)}
+    c, v = _run_review(state, plan, prompts.REVIEWER_OOC_SYSTEM, sections)
+    return {"review_comments_ooc": c, "review_verdict_ooc": v}
 
 
 def reviewer_logic_node(state: StoryState) -> dict:
@@ -518,23 +529,23 @@ def reviewer_logic_node(state: StoryState) -> dict:
         f"转折点：{plan.get('turning_point', '')}",
         "\n".join(_meta_sections(state, "reviewer")),
     ]
-    return {"review_comments_logic": _run_review(
-        state, plan, prompts.REVIEWER_LOGIC_SYSTEM, sections)}
+    c, v = _run_review(state, plan, prompts.REVIEWER_LOGIC_SYSTEM, sections)
+    return {"review_comments_logic": c, "review_verdict_logic": v}
 
 
 def reviewer_pacing_node(state: StoryState) -> dict:
     """只查节奏与篇幅。"""
     plan = _chapter_plan(state)
     if not config.REVIEW_PACING_ENABLED:
-        return {"review_comments_pacing": []}
+        return {"review_comments_pacing": [], "review_verdict_pacing": ""}
     meta = state.get("meta") or {}
     sections = [
         _beats_section(plan) or "（本章没有提供场景节拍，按情节大纲判断节奏）",
         (f"【本章目标字数】{meta['word_count']} 字（±20%）" if meta.get("word_count") else ""),
         f"【本章应写内容】第{plan.get('index')}章：{plan.get('outline', '')}",
     ]
-    return {"review_comments_pacing": _run_review(
-        state, plan, prompts.REVIEWER_PACING_SYSTEM, sections)}
+    c, v = _run_review(state, plan, prompts.REVIEWER_PACING_SYSTEM, sections)
+    return {"review_comments_pacing": c, "review_verdict_pacing": v}
 
 
 def merge_reviews_node(state: StoryState) -> dict:
@@ -542,15 +553,26 @@ def merge_reviews_node(state: StoryState) -> dict:
 
     路由判定只在合并后做一次——每一路各自判 fail 会让「某一路 fail 但没给出
     critical」这种空转情况被重复计三次。
+
+    判定依据有两条，缺一不可：
+      ① 有没有 critical 意见（原来的唯一依据）；
+      ② 有没有哪一路**明确报了 fail**。只看 critical 会漏掉这种情况：
+         模型判「不合格、要重写」，但 comments 一条都没解析出来（JSON 被截断后
+         只能救回 verdict）→ 于是被静默放行。既然模型已经说了不合格，就按
+         fail 走重写；轮数上限（MAX_REVISION_ROUNDS）会兜住成本，
+         而且下面会发一条告警说明是"没有具体意见的 fail"，不静默。
     """
     plan = _chapter_plan(state)
     groups = [
-        ("人物一致性", state.get("review_comments_ooc") or []),
-        ("逻辑/时间线/设定", state.get("review_comments_logic") or []),
-        ("节奏/篇幅", state.get("review_comments_pacing") or []),
+        ("人物一致性", state.get("review_comments_ooc") or [],
+         state.get("review_verdict_ooc") or ""),
+        ("逻辑/时间线/设定", state.get("review_comments_logic") or [],
+         state.get("review_verdict_logic") or ""),
+        ("节奏/篇幅", state.get("review_comments_pacing") or [],
+         state.get("review_verdict_pacing") or ""),
     ]
     merged = []
-    for label, items in groups:
+    for label, items, _v in groups:
         for c in items:
             c = dict(c)
             c.setdefault("from", label)
@@ -559,16 +581,33 @@ def merge_reviews_node(state: StoryState) -> dict:
     # critical 排前面，让撰稿人先看到必须改的
     merged.sort(key=lambda c: 0 if c.get("severity") == "critical" else 1)
     crit = [c for c in merged if c.get("severity") == "critical"]
-    verdict = "fail" if crit else "pass"
+    # 报了 fail 却一条 critical 都没给出的那几路（"" = 该路本次没跑成，不算 fail）。
+    # 注意判定要**逐路**做：某一路给了 critical，不代表另一路的"fail 但没意见"
+    # 就可以不管——那正是"模型判了不合格却查不出问题"的情况，必须单独说出来。
+    silent_fail = [
+        label for label, items, v in groups
+        if v == "fail" and not any(c.get("severity") == "critical" for c in items)]
+    verdict = "fail" if (crit or silent_fail) else "pass"
 
     if verdict == "fail":
-        by_dim = {}
-        for c in crit:
-            by_dim[c.get("from", "其他")] = by_dim.get(c.get("from", "其他"), 0) + 1
-        detail = "、".join(f"{k} {v} 条" for k, v in by_dim.items())
-        llm.emit_notice("info",
-                        f"第{plan['index']}章校对发现 {len(crit)} 个严重问题（{detail}），"
-                        f"已打回重写。")
+        if crit:
+            by_dim = {}
+            for c in crit:
+                by_dim[c.get("from", "其他")] = by_dim.get(c.get("from", "其他"), 0) + 1
+            detail = "、".join(f"{k} {v} 条" for k, v in by_dim.items())
+            extra = (f"；另有 {len(silent_fail)} 路（{'、'.join(silent_fail)}）"
+                     f"判定不通过但未给出具体意见" if silent_fail else "")
+            llm.emit_notice("info",
+                            f"第{plan['index']}章校对发现 {len(crit)} 个严重问题"
+                            f"（{detail}），已打回重写{extra}。")
+        else:
+            # 模型说不行，却没说出哪里不行 —— 必须让人看见，不能像以前那样静默放行
+            llm.emit_notice(
+                "warn",
+                f"第{plan['index']}章有 {len(silent_fail)} 路校对判定不通过"
+                f"（{'、'.join(silent_fail)}），但没有给出任何具体问题。"
+                f"已按校验结果打回重写；若反复出现，多半是该路校对输出被截断，"
+                f"建议关掉「深度思考」或换一个输出更稳的模型。")
     return {"review_verdict": verdict, "review_comments": merged}
 
 
@@ -638,6 +677,23 @@ def _stale_foreshadows(pool, idx: int):
     return out
 
 
+def _next_free_foreshadow_id(known_ids) -> str:
+    """伏笔自动编号：从 F1 开始找**第一个没被占用的编号**。
+
+    为什么不能沿用 `f"F{len(pool) + 1}"`：那隐含「编号连续且无缺口」。
+    而模型完全可以给出 `F1`、`F3` 这种不连续编号，或经过去重/手工编辑后留下
+    缺口。此时 `len + 1` 会撞上既有编号，走进"重复 id"分支 —— 改写旧伏笔的
+    描述、丢弃新伏笔，而且全程没有任何告警。伏笔账本是长篇的埋线，
+    被悄悄换掉要等读到后面才会发现。
+    """
+    n = 0
+    while True:
+        n += 1
+        fid = f"F{n}"
+        if fid not in known_ids:
+            return fid
+
+
 def memory_settler_node(state: StoryState) -> dict:
     plan = _chapter_plan(state)
     idx = plan["index"]
@@ -694,8 +750,10 @@ def memory_settler_node(state: StoryState) -> dict:
                 f.status = "progressing"
             f.last_advanced_chapter = idx
 
+    # 自动编号必须「找第一个空位」，不能用 len(pool)+1 —— 后者隐含"编号连续
+    # 无缺口"，撞号就会静默改写旧伏笔、丢弃新伏笔（见 _next_free_foreshadow_id）。
     for nf in delta.new_foreshadows:
-        fid = nf.id.strip() or f"F{len(mem.foreshadow_pool) + 1}"
+        fid = nf.id.strip() or _next_free_foreshadow_id(known_ids)
         if fid in known_ids:
             # 同一 id 重复埋设：以新描述为准，但不产生重复条目
             for f in mem.foreshadow_pool:

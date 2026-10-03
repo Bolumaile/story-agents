@@ -20,9 +20,12 @@ from pydantic import BaseModel
 
 import config
 import llm
+import models
+import products
 import prompts
 import nodes
 import graph as graph_mod
+import state as state_mod
 from state import StoryState
 
 app = FastAPI(title="小说多 Agent 创作工坊")
@@ -32,8 +35,19 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # 单用户本地工具：锁防并发；会话保存上一次运行结束后的完整 State，支持续写
+#
+# 这把锁的语义是「一次创作独占」：worker 全程持锁，其它会改动全局模型配置的
+# 接口（润色需求 / 读者反馈 / AI 补全 / 只预览大纲 / 新建故事）用**非阻塞**方式
+# 取锁，取不到就返回 409 说清楚原因。为什么不排队等：那些接口的调用链会读
+# config.DEEPSEEK_API_KEY / MODEL_NAME / ENABLE_THINKING 这些**模块级全局量**，
+# 而 worker 正在跑时也在读同一份——排队等上几分钟又没有任何进度反馈，
+# 不如立刻告诉用户"正在生成中"。详见 apply_llm_settings 的说明。
 _lock = threading.Lock()
 _session: Dict[str, Any] = {"state": None, "out_dir": None, "saved_at": None}
+
+# 「停止生成」信号：由 /api/generate/stop 或客户端断开连接置位，
+# worker 在每章开头检查它，置位就不再开始下一章（正在跑的那一章会自然跑完）。
+_cancel = threading.Event()
 
 MAX_CHAPTERS_PER_RUN = 10   # 单次运行章节数上限（防误填几十章）
 
@@ -280,6 +294,23 @@ SECTION_SCHEMA = {
 
 
 def apply_llm_settings(api_key="", base_url="", model="", mock=False, thinking=None):
+    """把本次请求的模型设置写进**模块级全局配置**。
+
+    ⚠ 调用者必须已经持有 `_lock`（或由 worker 在锁内调用）。
+
+    为什么这个约定是硬要求：config.DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL /
+    MODEL_NAME / ENABLE_THINKING 与 llm.USE_MOCK 都是进程级全局量，而流水线里
+    每一次 LLM 调用都是在读它们。以前这几个函数**全部不持锁**，于是
+    「写到第 3 章时点一下『需求润色 / AI 补全 / 读者反馈 / 大纲预览』」就会
+    把正在跑的这次创作的模型、Key、思考开关中途换掉，甚至真模型与 mock 混跑；
+    又因为这里只在字段非空时才覆盖，还会产生"换了 model 但沿用旧 key"的
+    半新半旧配置。两个并发 /api/generate 时更明显：后一个请求先改配置，
+    前一个拿到锁后执行的却是后一个的配置。
+
+    彻底的做法是把配置随请求参数化（一路传到 llm.chat），那是较大的重构；
+    当前用「所有写全局配置的入口统一持同一把锁」把竞态从根上掐掉，
+    代价是并发点这些功能会得到一句明确的 409 而不是静默把稿子写坏。
+    """
     if api_key:
         config.DEEPSEEK_API_KEY = api_key
     if base_url:
@@ -289,6 +320,19 @@ def apply_llm_settings(api_key="", base_url="", model="", mock=False, thinking=N
     if thinking is not None:
         config.ENABLE_THINKING = bool(thinking)
     llm.USE_MOCK = mock
+
+
+def _acquire_or_409(what: str) -> None:
+    """非阻塞取「创作独占锁」；正在生成时直接 409，说清楚发生了什么。
+
+    用非阻塞而不是排队等待：等待期间前端既没有进度、也不知道要等多久，
+    体感就是"按钮点了没反应"。这里如实告诉用户"正在生成中"更有用。
+    """
+    if not _lock.acquire(blocking=False):
+        raise HTTPException(
+            409,
+            f"正在生成中，暂时不能{what}。请等这一章跑完，"
+            f"或先点「停止生成」（已定稿的章节会保留）。")
 
 
 def build_user_prompt(req: GenReq) -> str:
@@ -348,16 +392,8 @@ def build_meta(req: GenReq) -> Dict[str, Any]:
 
 
 def _fresh_state(req: GenReq) -> StoryState:
-    return StoryState(
-        user_prompt=build_user_prompt(req),
-        outline={}, chapter_index=1,
-        chapter_draft="", review_comments=[], review_verdict="pass",
-        # 三路并行校对 + 风格体检
-        review_comments_ooc=[], review_comments_logic=[], review_comments_pacing=[],
-        style_report={},
-        revision_round=0, final_chapter="",
-        meta=build_meta(req), memory={}, final_chapters=[],
-    )
+    """表单 → 初始 State。字段清单在 state.new_state（与 CLI 共用一份）。"""
+    return state_mod.new_state(build_user_prompt(req), build_meta(req))
 
 
 @app.get("/")
@@ -377,16 +413,56 @@ def api_session():
 
 @app.post("/api/session/clear")
 def api_session_clear():
-    """新建故事：清掉当前会话（已生成的文件仍留在 outputs_web，不做删除）。"""
-    _session["state"] = None
-    _session["out_dir"] = None
-    _session["saved_at"] = None
+    """新建故事：清掉当前会话（已生成的文件仍留在 outputs_web，不做删除）。
+
+    必须在锁内执行：生成任务跑到一半时点「新建故事」，以前会删掉
+    `_session.json` 并把内存会话置空，紧接着 worker 的 `_remember` 又把 state
+    写回来、`os.replace` 重建文件 —— 于是「新建」之后旧会话又冒出来（看似随机）。
+    取不到锁就给 409，而不是让两边交错。
+    """
+    _acquire_or_409("新建故事")
     try:
-        if os.path.exists(SESSION_PATH):
-            os.remove(SESSION_PATH)            # 只删本程序生成的存档，不碰用户产物
-    except Exception as e:                     # noqa: BLE001
-        print(f"[session] 存档删除失败：{type(e).__name__}: {e}")
+        _session["state"] = None
+        _session["out_dir"] = None
+        _session["saved_at"] = None
+        try:
+            if os.path.exists(SESSION_PATH):
+                os.remove(SESSION_PATH)        # 只删本程序生成的存档，不碰用户产物
+        except Exception as e:                 # noqa: BLE001
+            print(f"[session] 存档删除失败：{type(e).__name__}: {e}")
+        # 告警去重表是进程级的，key 只与"值名"相关（如 item.status.xxx）。
+        # 不清空的话，**上一个故事触发过的同类告警会在下一个故事里被永久屏蔽**。
+        models.reset_warnings()
+    finally:
+        _lock.release()
     return {"ok": True}
+
+
+class MemoryEditReq(BaseModel):
+    """记忆库面板的手工编辑结果（整份替换）。"""
+    memory: Dict[str, Any] = {}
+
+
+@app.post("/api/session/memory")
+def api_session_memory(req: MemoryEditReq):
+    """把用户在记忆库面板里手工改过的 JSON 落盘。
+
+    以前「保存记忆修改」按钮只改了一句提示文字：既不写 localStorage、
+    也不回写服务端，刷新页面就被 `_session.json` 里的旧值覆盖回去 ——
+    按钮文案与行为不符。这里让它真正落盘。
+    """
+    _acquire_or_409("保存记忆库")
+    try:
+        st = _session.get("state")
+        if not st:
+            raise HTTPException(400, "当前没有可续写的会话，记忆库暂时无处保存"
+                                     "（先完整创作至少一章）。")
+        st["memory"] = req.memory or {}
+        _save_session()
+        saved_at = _session.get("saved_at")
+    finally:
+        _lock.release()
+    return {"ok": True, "saved_at": saved_at}
 
 
 @app.post("/api/polish_requirement")
@@ -394,11 +470,15 @@ def api_polish_requirement(req: PolishReq):
     """核心需求 AI 润色：只言片语 → 结构完整的创作需求。"""
     if not req.text.strip():
         raise HTTPException(400, "内容为空，先写点东西再润色")
-    apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
-                       getattr(req, "thinking", False))
-    raw = llm.chat(prompts.REQ_POLISHER_SYSTEM,
-                   f"用户的原始需求：\n{req.text.strip()}",
-                   temperature=0.6)
+    _acquire_or_409("润色需求")
+    try:
+        apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
+                           getattr(req, "thinking", False))
+        raw = llm.chat(prompts.REQ_POLISHER_SYSTEM,
+                       f"用户的原始需求：\n{req.text.strip()}",
+                       temperature=0.6)
+    finally:
+        _lock.release()
     return {"text": raw}
 
 
@@ -407,11 +487,15 @@ def api_reader_feedback(req: ReaderReq):
     """读者反馈 Agent：以挑剔读者视角给阅读感受与追读意愿分。"""
     if not req.text.strip():
         raise HTTPException(400, "正文为空")
-    apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
-                       getattr(req, "thinking", False))
-    raw = llm.chat(prompts.READER_SYSTEM,
-                   f"【正文】\n{req.text.strip()}\n\n请输出你的阅读反馈。",
-                   temperature=0.7)
+    _acquire_or_409("生成读者反馈")
+    try:
+        apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
+                           getattr(req, "thinking", False))
+        raw = llm.chat(prompts.READER_SYSTEM,
+                       f"【正文】\n{req.text.strip()}\n\n请输出你的阅读反馈。",
+                       temperature=0.7)
+    finally:
+        _lock.release()
     return {"text": raw}
 
 
@@ -536,40 +620,44 @@ def api_ai_fill(req: FillReq):
         if "api.deepseek.com" in (req.base_url or config.DEEPSEEK_BASE_URL):
             raise HTTPException(400, "未填 API Key。本地模型请填 Base URL，或勾选 mock 先试跑")
 
-    apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
-                       getattr(req, "thinking", False))
-
     current = req.current or {}
     todo = list(keys) if req.overwrite else [k for k in keys if _blank(current.get(k))]
     if not todo:
         return {"fields": {}, "todo": [],
                 "message": "该分段已填写完整；如需让 AI 重写，请点「AI 重写」"}
 
-    filled = {k: v for k, v in current.items() if not _blank(v)}
-    user_msg = (
-        f"【核心需求】\n{req.requirement.strip() or '（用户未填写，请自设一套内在自洽的通用设定）'}\n\n"
-        f"【用户已填写的内容（不得改变其原意）】\n"
-        f"{json.dumps(filled, ensure_ascii=False, indent=2) if filled else '（暂无）'}\n\n"
-        f"【本次需要补全的字段】{'、'.join(todo)}\n\n"
-        f"请严格按下面的 JSON 结构输出（字段名一字不差）：\n{SECTION_SCHEMA[req.section]}"
-    )
-    # 走 chat_json：解析失败会自动附「禁止英文双引号」的提示重试一次，
-    # 补全表单时模型也常犯这个毛病（在 issue/suggestion 里直接引原文）
-    data = llm.chat_json(prompts.FIELD_FILLER_SYSTEM, user_msg, temperature=0.8)
+    _acquire_or_409("AI 补全表单")
+    try:
+        apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
+                           getattr(req, "thinking", False))
 
-    result = {}
-    for k in todo:
-        if k in data and not _blank(data[k]):
-            result[k] = data[k]
+        filled = {k: v for k, v in current.items() if not _blank(v)}
+        user_msg = (
+            f"【核心需求】\n{req.requirement.strip() or '（用户未填写，请自设一套内在自洽的通用设定）'}\n\n"
+            f"【用户已填写的内容（不得改变其原意）】\n"
+            f"{json.dumps(filled, ensure_ascii=False, indent=2) if filled else '（暂无）'}\n\n"
+            f"【本次需要补全的字段】{'、'.join(todo)}\n\n"
+            f"请严格按下面的 JSON 结构输出（字段名一字不差）：\n{SECTION_SCHEMA[req.section]}"
+        )
+        # 走 chat_json：解析失败会自动附「禁止英文双引号」的提示重试一次，
+        # 补全表单时模型也常犯这个毛病（在 issue/suggestion 里直接引原文）
+        data = llm.chat_json(prompts.FIELD_FILLER_SYSTEM, user_msg, temperature=0.8)
 
-    # 文风样例用专用提示词单独生成，质感更稳
-    if "style_sample" in todo:
-        sample = llm.chat(
-            prompts.STYLE_SAMPLE_SYSTEM,
-            f"【题材与基调】\n{req.requirement.strip() or '（未指定，按经典短篇小说的语言质感写）'}",
-            temperature=0.9).strip()
-        if sample:
-            result["style_sample"] = sample
+        result = {}
+        for k in todo:
+            if k in data and not _blank(data[k]):
+                result[k] = data[k]
+
+        # 文风样例用专用提示词单独生成，质感更稳
+        if "style_sample" in todo:
+            sample = llm.chat(
+                prompts.STYLE_SAMPLE_SYSTEM,
+                f"【题材与基调】\n{req.requirement.strip() or '（未指定，按经典短篇小说的语言质感写）'}",
+                temperature=0.9).strip()
+            if sample:
+                result["style_sample"] = sample
+    finally:
+        _lock.release()
 
     return {"fields": result, "todo": todo}
 
@@ -579,11 +667,27 @@ def api_outline_preview(req: GenReq):
     """风格预览：只跑策划 Agent 出大纲，不写正文。"""
     if not req.requirement.strip():
         raise HTTPException(400, "核心需求不能为空")
-    apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
-                       getattr(req, "thinking", False))
-    state = _fresh_state(req)
-    delta = nodes.planner_node(state)
+    _acquire_or_409("预览大纲")
+    try:
+        apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
+                           getattr(req, "thinking", False))
+        state = _fresh_state(req)
+        delta = nodes.planner_node(state)
+    finally:
+        _lock.release()
     return {"outline": delta["outline"]}
+
+
+@app.post("/api/generate/stop")
+def api_generate_stop():
+    """请求停止当前的生成任务。
+
+    刻意**不取锁**：它必须在创作进行中也能立刻响应。置位后 worker 会在
+    **下一章开头**退出（正在跑的那一章让它自然跑完，避免留下半截正文），
+    已定稿的章节照常落盘。
+    """
+    _cancel.set()
+    return {"ok": True}
 
 
 @app.post("/api/generate")
@@ -593,9 +697,6 @@ def api_generate(req: GenReq):
     if not req.mock and not (req.api_key or config.DEEPSEEK_API_KEY):
         if "api.deepseek.com" in (req.base_url or config.DEEPSEEK_BASE_URL):
             raise HTTPException(400, "未填 API Key。本地模型请填 Base URL，或勾选 mock 先试跑")
-
-    apply_llm_settings(req.api_key, req.base_url, req.model, req.mock,
-                       getattr(req, "thinking", False))
 
     chapters = max(1, min(req.chapters, MAX_CHAPTERS_PER_RUN))
     continue_mode = req.mode == "continue"
@@ -617,7 +718,10 @@ def api_generate(req: GenReq):
     out_dir = _session.get("out_dir") if continue_mode and _session.get("out_dir") else None
     if not out_dir:
         out_dir = os.path.join(OUTPUTS_DIR, f"run_{time.strftime('%Y%m%d_%H%M%S')}")
-        os.makedirs(out_dir, exist_ok=True)
+    # 续写时 out_dir 来自会话，而那个目录可能已被用户手工删掉（或换了盘）。
+    # 这里必须**在开跑之前**就补建：否则一路 LLM 调用全跑完、到写产物时才抛
+    # FileNotFoundError，整章的钱白烧。
+    os.makedirs(out_dir, exist_ok=True)
 
     def sse():
         """SSE 推送。
@@ -655,20 +759,27 @@ def api_generate(req: GenReq):
         def worker():
             try:
                 with _lock:
+                    # 配置在**锁内**应用：api_generate 是在启动线程前就返回的，
+                    # 若在端点里改配置，趁 worker 还没拿到锁的窗口，另一个请求
+                    # 就能把配置改掉（见 apply_llm_settings 的说明）。
+                    apply_llm_settings(req.api_key, req.base_url, req.model,
+                                       req.mock, getattr(req, "thinking", False))
+                    _cancel.clear()          # 新的一次运行，先清掉上一轮可能留下的停止信号
                     llm.set_progress_cb(on_progress)
                     llm.set_notice_cb(on_notice)
                     push({"type": "start", "chapters": chapters, "mock": req.mock,
                           "mode": req.mode, "start_index": start_idx})
 
+                    stopped = False
                     for idx in range(start_idx, start_idx + chapters):
-                        state.update({
-                            "chapter_index": idx, "chapter_draft": "",
-                            "review_comments": [], "review_verdict": "pass",
-                            # 三路 specialist 各写各的 key，每章开始必须一起清空
-                            "review_comments_ooc": [], "review_comments_logic": [],
-                            "review_comments_pacing": [], "style_report": {},
-                            "revision_round": 0, "final_chapter": "",
-                        })
+                        # 「停止生成」只在章与章之间生效：正在跑的那一章让它自然
+                        # 收尾（否则会留下半截正文），已定稿的章节照常落盘。
+                        if _cancel.is_set():
+                            stopped = True
+                            break
+                        # 每章重置字段清单与 CLI 共用（state.reset_chapter_fields），
+                        # 漏清三路校对 key 会把上一章的意见串进这一章。
+                        state.update(state_mod.reset_chapter_fields(idx))
                         push({"type": "chapter_start", "index": idx,
                               "is_first": not state["outline"], "thinking": req.thinking})
 
@@ -697,12 +808,14 @@ def api_generate(req: GenReq):
                                           "round": state["revision_round"]})
 
                         final = state["final_chapters"][-1]
-                        with open(os.path.join(out_dir, f"chapter_{idx:02d}.md"),
-                                  "w", encoding="utf-8") as f:
-                            f.write(f"# {final['title']}\n\n{state['final_chapter']}\n")
+                        # 产物统一走 products 模块（原子写 + 标题归一）。
+                        # 这里同时把 outline.json / memory.json / final.md 一起刷掉：
+                        # 原先它们写在逐章循环**之外**，中途任何一章失败，产物目录里
+                        # 就只剩 chapter_XX.md，用户按目录找文件会以为内容丢了。
+                        products.write_chapter_products(out_dir, state)
                         push({
                             "type": "chapter_done", "index": idx,
-                            "title": final["title"], "text": state["final_chapter"],
+                            "title": final["title"], "text": final.get("text") or "",
                             "rounds": state.get("revision_round", 0),
                             "mock": req.mock,
                             "style_report": state.get("style_report") or {},
@@ -713,26 +826,25 @@ def api_generate(req: GenReq):
                         # 已写好的章节与记忆库都还在，重开就能接着续写。
                         _remember(state, out_dir)
 
-                    with open(os.path.join(out_dir, "outline.json"), "w", encoding="utf-8") as f:
-                        json.dump(state["outline"], f, ensure_ascii=False, indent=2)
-                    with open(os.path.join(out_dir, "memory.json"), "w", encoding="utf-8") as f:
-                        json.dump(state.get("memory") or {}, f, ensure_ascii=False, indent=2)
-                    with open(os.path.join(out_dir, "final.md"), "w", encoding="utf-8") as f:
-                        f.write(f"# {state['outline'].get('title')}\n\n")
-                        for ch in state["final_chapters"]:
-                            f.write(f"## 第{ch['index']}章 {ch['title']}\n\n{ch['text']}\n\n")
-
                     # 保存会话供续写（包含策划案 / 记忆 / 已定稿章节）
                     _remember(state, out_dir)
 
-                    push({"type": "all_done", "out_dir": _display_dir(out_dir),
-                          "memory": state.get("memory") or {},
-                          "outline": state["outline"],
-                          "mock": req.mock,
-                          "total_chapters": len(state["final_chapters"])})
+                    if stopped:
+                        push({"type": "stopped",
+                              "out_dir": _display_dir(out_dir),
+                              "memory": state.get("memory") or {},
+                              "outline": state["outline"],
+                              "total_chapters": len(state["final_chapters"])})
+                    else:
+                        push({"type": "all_done", "out_dir": _display_dir(out_dir),
+                              "memory": state.get("memory") or {},
+                              "outline": state["outline"],
+                              "mock": req.mock,
+                              "total_chapters": len(state["final_chapters"])})
             except Exception as e:                      # noqa: BLE001
                 # 已定稿的章节仍然入库，便于用户续写已写好的部分
                 if state.get("final_chapters"):
+                    products.write_chapter_products(out_dir, state)
                     _remember(state, out_dir)
                 push({"type": "error",
                       "message": _explain_run_error(e),
@@ -745,15 +857,22 @@ def api_generate(req: GenReq):
 
         threading.Thread(target=worker, daemon=True).start()
 
-        while True:
-            try:
-                item = q.get(timeout=15)
-            except queue.Empty:
-                yield _evt({"type": "ping"})            # 心跳：保持连接不被中间层掐断
-                continue
-            if item is None:
-                break
-            yield _evt(item)
+        try:
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                except queue.Empty:
+                    yield _evt({"type": "ping"})        # 心跳：保持连接不被中间层掐断
+                    continue
+                if item is None:
+                    break
+                yield _evt(item)
+        except GeneratorExit:
+            # 客户端断开了（关页面 / 点了「停止生成」/ 网络断）。
+            # 置位停止信号：worker 是 daemon 线程，不通知它的话，浏览器已经走了，
+            # 它还会把剩下的章节一章一章跑完——继续烧 token。
+            _cancel.set()
+            raise
 
     return StreamingResponse(sse(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",

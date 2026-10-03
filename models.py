@@ -26,6 +26,7 @@
 3. 所有模型都能 `model_dump()` 成纯 dict，可直接塞进 State 和 JSON 文件。
 """
 import re
+import threading
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
@@ -179,12 +180,17 @@ OptCount = Annotated[Optional[int], BeforeValidator(_norm_count)]
 
 # ── 告警：同一类问题只提醒一次，避免刷屏 ──────────────────────────
 _REPORTED: set = set()
+# 「检查后写入」必须原子：三路校对是并行跑的，两路同时调用 _warn 时
+# 都能通过 `key in _REPORTED` 检查，结果同一条告警被推两遍。
+_REPORTED_LOCK = threading.Lock()
 
 
 def _warn(key: str, message: str) -> None:
-    if key in _REPORTED:
-        return
-    _REPORTED.add(key)
+    with _REPORTED_LOCK:
+        if key in _REPORTED:
+            return
+        _REPORTED.add(key)
+    # 回调放在锁外：它会把消息塞进队列，不该占着去重表的锁
     try:
         llm.emit_notice("warn", message)
     except Exception:                                    # noqa: BLE001
@@ -192,8 +198,14 @@ def _warn(key: str, message: str) -> None:
 
 
 def reset_warnings() -> None:
-    """清空告警去重表（测试用；生产环境跨章保留更合理）。"""
-    _REPORTED.clear()
+    """清空告警去重表。
+
+    进程级共享的表，key 只与"值名"相关（如 `item.status.xxx`）。**新建故事时必须
+    调用**：否则上一个故事触发过的同类告警，会在下一个故事里被永久屏蔽
+    （原先它只被测试调用，网页端「新建故事」不会清）。
+    """
+    with _REPORTED_LOCK:
+        _REPORTED.clear()
 
 
 # ── 枚举归一 ─────────────────────────────────────────────────────
