@@ -6,41 +6,214 @@
 <title>小说多 Agent 创作工坊</title>
 <link rel="stylesheet" href="/static/fonts/fonts.css">
 <style>
-/* 字体换血记录（2026-09-30）：
-   原「印品鸿蒙体」为非商用授权艺术字体，已不再引用；字体文件仍保留在
-   web/static/fonts/yinpin-hongmengti.ttf，想换回就恢复下面的 @font-face 与 --font-ui。
-   现用 Google Fonts 的思源系列（SIL OFL 授权，可商用），已本地化到 fonts/ 下。 */
-:root{
-  --bg:#f6f4ef; --panel:#fffdf8; --ink:#2b2620; --sub:#6f675c; --line:#e3ddd2;
-  --accent:#8a5a2b; --accent-soft:#f0e6d8; --ok:#3a7d44; --warn:#b3541e; --bad:#a03028;
-  /* 思源宋体：页面标题、板块标题、小说正文——书卷感强 */
+/* ───────── 设计 token：5 套主题 ─────────
+   为什么用变量而不是 5 个 CSS 文件：
+   页面所有颜色都从 token 派生，切主题只换 <html data-theme>，不重绘任何规则。
+   下方每个主题的色值都跑过 WCAG 2.2 验算（文字 ≥4.5:1、边框等非文本 ≥3:1），
+   求解方式是保持色相不变、只调明度到刚好达标 —— 不要凭肉眼改，改完请重跑验算。
+   --line 是「控件边框」色（必须 ≥3:1，见 WCAG 1.4.11）；
+   --line2 是「纯分隔线」色，装饰用途，不承担识别功能，故不设 3:1 下限。 */
+:root,
+html[data-theme="xuan"]{
+  --bg:#f6f4ef; --panel:#fffdf8; --field:#ffffff; --ink:#2b2620; --sub:#6b6357;
+  --line:#958c7f; --line2:#e3ddd2;
+  --accent:#7d4f1e; --onaccent:#ffffff; --accent-soft:#f0e6d8;
+  --ok:#2f7039; --warn:#9a4a12; --bad:#93261f;
+  --ok-bg:#e6f2e8; --ok-bd:#7fae86; --warn-bg:#f6e8dc; --warn-bd:#c08a5e;
+  --bad-bg:#fdf0ee; --bad-bd:#c98b82; --info-bg:#eaf1f7; --info-bd:#7f9cb8; --info-ink:#2c4a63;
+  --cmt-bg:#fdf3ef; --cmt-bd:#d8a696; --minor-bg:#fbf6ea; --minor-bd:#cbb37e;
+  --toast-bg:#2b2620; --toast-ink:#f7f4ee;
+  --chip-bg:#ffffff; --card-bg:#fffef9; --overlay:rgba(28,24,20,.42);
+  --shadow:0 14px 44px rgba(0,0,0,.3);
+  --radius:10px; --radius-sm:6px;
   --font-serif:"Noto Serif SC","Noto Serif","Source Han Serif SC","宋体",serif;
-  /* 思源黑体：表单、标签、按钮等密集交互区——小字更清晰 */
   --font-sans:"Noto Sans SC","Noto Sans",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
   --font-mono:"Cascadia Mono",Consolas,"Courier New",monospace;
   --font-ui:var(--font-serif);
-  /* 字号梯度：基础 16 / 正文 17 / 标签 14 / 小字 13.5 */
   --fs-base:16px; --fs-body:17px; --fs-small:13.5px; --fs-label:14px;
+  /* 阅读密度倍率：由设置面板写入。0 / 未设置 = 用上面的默认值。
+     用倍率而不是直接改 px，这样换主题时字号偏好继续生效（每套主题的
+     基础字号略有不同，倍率叠加在各自基础上才对）。
+     注意 --lh-scale 语义是「行高倍数本身」（1.4~2.2），不是倍率 ——
+     滑块显示的就是最终行高，别再乘 1.85，否则用户拖到 1.4 会得到 2.59。 */
+  --fs-scale:1; --lh-scale:1.85;
 }
-/* 需要切回印品鸿蒙体时，取消注释并把 --font-ui 改成 var(--font-art)：
-@font-face{font-family:"Yinpin Hongmengti";
-  src:url("/static/fonts/yinpin-hongmengti.ttf") format("truetype");font-display:swap}
-*/
+/* 倍率派生值：正文与行高。所有用到 --fs-body / 正文 line-height 的地方都走这里。 */
+:root{
+  --fs-body-eff:calc(var(--fs-body) * var(--fs-scale));
+  --lh-eff:var(--lh-scale);
+  --fs-small-eff:calc(var(--fs-small) * var(--fs-scale));
+}
+html[data-theme="ye"]{
+  --bg:#1b1a18; --panel:#232220; --field:#2a2926; --ink:#e9e5dd; --sub:#a9a399;
+  --line:#77716a; --line2:#403d39;
+  --accent:#e0964a; --onaccent:#1b1a18; --accent-soft:#332a1f;
+  --ok:#7fce8b; --warn:#f0b070; --bad:#f08a80;
+  --ok-bg:#1e2a20; --ok-bd:#4e7a58; --warn-bg:#2e2418; --warn-bd:#7d5c33;
+  --bad-bg:#2e1c1a; --bad-bd:#7d4a44; --info-bg:#1c242c; --info-bd:#4a6070; --info-ink:#a8c4d8;
+  --cmt-bg:#2a1e1a; --cmt-bd:#6e4740; --minor-bg:#2a2519; --minor-bd:#6b5a33;
+  --toast-bg:#e9e5dd; --toast-ink:#1b1a18;
+  --chip-bg:#2a2926; --card-bg:#211f1e; --overlay:rgba(0,0,0,.62);
+  --shadow:0 14px 44px rgba(0,0,0,.55);
+}
+html[data-theme="desk"]{
+  --bg:#f3f4f6; --panel:#ffffff; --field:#ffffff; --ink:#18181b; --sub:#52525b;
+  --line:#8c8c97; --line2:#d4d4dc;
+  --accent:#1d4ed8; --onaccent:#ffffff; --accent-soft:#e3e9fb;
+  --ok:#166534; --warn:#92400e; --bad:#991b1b;
+  --ok-bg:#e8f5ea; --ok-bd:#7aa582; --warn-bg:#fdf0e3; --warn-bd:#bb8f5a;
+  --bad-bg:#fdecec; --bad-bd:#c08888; --info-bg:#e8f0fa; --info-bd:#7c9ac0; --info-ink:#1e3a5f;
+  --cmt-bg:#fdeeea; --cmt-bd:#cd9a8c; --minor-bg:#fbf3e2; --minor-bd:#bfa06a;
+  --toast-bg:#18181b; --toast-ink:#fafafa;
+  --chip-bg:#ffffff; --card-bg:#fafafa; --overlay:rgba(24,24,27,.44);
+  --shadow:0 14px 44px rgba(24,24,27,.22);
+  --radius:8px; --radius-sm:6px;
+  --font-ui:var(--font-sans);
+}
+html[data-theme="min"]{
+  --bg:#ffffff; --panel:#ffffff; --field:#ffffff; --ink:#111111; --sub:#555555;
+  --line:#767676; --line2:#e0e0e0;
+  --accent:#111111; --onaccent:#ffffff; --accent-soft:#f0f0f0;
+  --ok:#1f6b2e; --warn:#8a4b0f; --bad:#8f1d18;
+  --ok-bg:#eaf5ec; --ok-bd:#7ba786; --warn-bg:#fbf1e4; --warn-bd:#bb9068;
+  --bad-bg:#fbeceb; --bad-bd:#c08c88; --info-bg:#eef1f4; --info-bd:#8b96a0; --info-ink:#33414d;
+  --cmt-bg:#fbeceb; --cmt-bd:#c08c88; --minor-bg:#fbf4e8; --minor-bd:#bda173;
+  --toast-bg:#111111; --toast-ink:#ffffff;
+  --chip-bg:#ffffff; --card-bg:#fcfcfc; --overlay:rgba(17,17,17,.4);
+  --shadow:0 14px 44px rgba(0,0,0,.16);
+  --radius:4px; --radius-sm:4px;
+  --font-ui:var(--font-serif);
+}
+html[data-theme="cyber"]{
+  --bg:#0d1117; --panel:#161b22; --field:#1c2129; --ink:#e6edf3; --sub:#9198a1;
+  --line:#6b737e; --line2:#30363d;
+  --accent:#58a6ff; --onaccent:#0d1117; --accent-soft:#132133;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+  --ok-bg:#12261a; --ok-bd:#3d6b42; --warn-bg:#2a2213; --warn-bd:#7d6428;
+  --bad-bg:#2b1618; --bad-bd:#7d3b3f; --info-bg:#132030; --info-bd:#3f5f7f; --info-ink:#9fc7e8;
+  --cmt-bg:#25161a; --cmt-bd:#6e3b42; --minor-bg:#262014; --minor-bd:#6d5c2e;
+  --toast-bg:#e6edf3; --toast-ink:#0d1117;
+  --chip-bg:#1c2129; --card-bg:#161b22; --overlay:rgba(1,4,9,.7);
+  --shadow:0 14px 44px rgba(0,0,0,.6);
+  --radius:6px; --radius-sm:4px;
+  --font-ui:var(--font-sans);
+}
+/* ───────── 第 6 套：瑞士国际主义（Swiss International Typographic Style）
+   规范来源：ui-ux-pro-max 技能库 styles.csv 的 swiss-modernism-2-0 条目，
+   配色与对比度由本项目求解器验算（37 项全过）。
+   风格要点与本项目的取舍：
+   · 纯黑白 + 单一强调色（瑞士红 #d81e05）—— 不做多色语义区分；
+   · 零圆角、零阴影、无渐变、无装饰；
+   · 8px 数学化间距（--u:8px），所有圆角/阴影为 0；
+   · 全站用无衬线（--font-ui 走思源黑体），唯一靠字号与字重拉层级；
+   · 强调色只用于「当前选中」和「主行动」，不铺陈。
+   技能库原条目「Do Not Use For: emotional storytelling」——小说是情绪叙事，
+   所以正文（.chapter pre）仍保留思源宋体，只让「工具外壳」变成瑞士网格。
+   这样既拿到秩序感，又不牺牲长文可读性。 */
+html[data-theme="swiss"]{
+  --bg:#ffffff; --panel:#ffffff; --field:#ffffff; --ink:#000000; --sub:#303030;
+  --line:#404040; --line2:#e0e0e0;
+  --accent:#d81e05; --onaccent:#ffffff;
+  /* accent-soft 由 #fdeceb 调浅到 #fdf3f2：原来的深粉底上，
+     瑞士红文字只有 4.47:1，卡在 4.5 门槛下（目录当前项、chip 悬停都踩这个组合）。
+     调浅后升到 4.69:1，肉眼仍是明显的粉底。改色请重跑 _tmp_check/verify.py。 */
+  --accent-soft:#fdf3f2;
+  --ok:#0b6b3a; --warn:#8a4b0f; --bad:#a3111a;
+  --ok-bg:#eaf4ee; --ok-bd:#649675; --warn-bg:#fbf1e4; --warn-bd:#ad8556;
+  --bad-bg:#fbeceb; --bad-bd:#b57b77; --info-bg:#eef1f4; --info-bd:#808c97; --info-ink:#1d2830;
+  --cmt-bg:#f6f6f6; --cmt-bd:#8e8e8e; --minor-bg:#f4f4f4; --minor-bd:#9d8b67;
+  --toast-bg:#000000; --toast-ink:#ffffff;
+  --chip-bg:#ffffff; --card-bg:#ffffff; --overlay:rgba(0,0,0,.5);
+  --shadow:none;                    /* 瑞士风不用投影分层，靠边框与留白 */
+  --radius:0px; --radius-sm:0px;   /* 全站零圆角 */
+  --font-ui:var(--font-sans);      /* 界面全用黑体，唯一靠字号字重分级 */
+  --u:8px;                         /* 数学化间距基准 */
+  --hair:1px;                      /* 发丝线：瑞士风的标志 */
+}
+/* 瑞士风专属微调：把圆角、阴影、留白全部压到网格上。
+   1) 所有卡片与输入框改成「2px 左侧红条 + 黑色发丝边框」，这是瑞士风的
+      典型标识，不是装饰而是分区手段；2) 标题全大写加字距，形成层级。 */
+html[data-theme="swiss"] .card{border:2px solid #000;border-left:6px solid var(--accent);
+  border-radius:0;padding:calc(var(--u)*2) calc(var(--u)*2.5)}
+html[data-theme="swiss"] .card summary{border-radius:0;text-transform:none;letter-spacing:0}
+html[data-theme="swiss"] input,html[data-theme="swiss"] textarea,
+html[data-theme="swiss"] select,html[data-theme="swiss"] button{border-radius:0}
+html[data-theme="swiss"] button{font-weight:500;letter-spacing:.4px}
+html[data-theme="swiss"] .chapter,html[data-theme="swiss"] .char-card,
+html[data-theme="swiss"] .cmt,html[data-theme="swiss"] .notice,
+html[data-theme="swiss"] #mockWarn,html[data-theme="swiss"] #jsState,
+html[data-theme="swiss"] #errBox,html[data-theme="swiss"] #connBox,
+html[data-theme="swiss"] #confirmBar .cf-box{border-radius:0}
+html[data-theme="swiss"] #toasts .t{border-radius:0}
+/* 主题切换的过渡：只动 color/background/border-color，且尊重 reduced-motion */
+body,.card,input,textarea,select,button,.chip,.badge,.cmt,.step,#toasts .t{
+  transition:background-color .2s ease,color .2s ease,border-color .2s ease}
+@media (prefers-reduced-motion:reduce){
+  body,.card,input,textarea,select,button,.chip,.badge,.cmt,.step,#toasts .t{
+    transition:none}
+}
 *{box-sizing:border-box;margin:0;padding:0}
+/* ───────── 焦点样式（WCAG 2.4.7）─────────
+   原先全站没有一条 :focus 规则，深色主按钮上浏览器默认焦点环几乎与按钮同色，
+   键盘用户看不出焦点在哪。现在统一用「双层环」：内层浅色描边 + 外层主色，
+   在任何主题的任何底色上都能看清。:focus-visible 保证鼠标点击不出现，
+   键盘 Tab 一定有。 */
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;
+  box-shadow:0 0 0 4px var(--accent-soft)}
+/* 老浏览器不支持 :focus-visible 时退回 :focus，至少可见 */
+@supports not selector(:focus-visible){
+  :focus{outline:2px solid var(--accent);outline-offset:2px}
+}
+/* 焦点环在深色输入框里也要看得见：输入框自身已有一层边框 */
+input:focus-visible,textarea:focus-visible,select:focus-visible{
+  outline:2px solid var(--accent);outline-offset:1px}
+/* 跳转链接：Tab 第一次按下时才出现，藏在首屏之外不干扰 */
+.skip{position:absolute;left:-9999px;top:0;z-index:500;
+  background:var(--panel);color:var(--ink);padding:10px 16px;
+  border:2px solid var(--accent);border-radius:0 0 var(--radius) 0}
+.skip:focus{left:0}
+/* 视觉隐藏但保留给读屏：标签、章节标题等「结构需要、视觉不需要」的文本 */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* ───────── 动画偏好（WCAG 2.3.3）─────────
+   前庭功能障碍用户对旋转/缩放动画敏感。系统开启「减少动态效果」时，
+   齿轮停转、进度徽标不再变化，改为静态文字。 */
+@media (prefers-reduced-motion:reduce){
+  .spin{animation:none}
+  .spin::after{content:"（进行中）"}
+  button:hover{filter:none}
+  .card,.chip,.step{transition:none}
+}
+/* ───────── 动效三态（设置面板可切）─────────
+   data-motion="system" 跟随系统（默认，= 上面那条 @media 生效）
+   data-motion="off"    强制全关，用户在系统没开减弱动效时也能自己关掉
+   data-motion="on"     强制全开（用于录屏/演示，需要画面动起来的场合）
+   放在 @media 之后写：默认 system 时同一批规则会被上面的媒体查询覆盖，
+   只有 off/on 才真正改写 —— 用 :not(html[data-motion="system"]) 限定，
+   避免与系统设置打架。 */
+html:not([data-motion="system"]) .spin{animation:none}
+html:not([data-motion="system"]) .spin::after{content:"（进行中）"}
+html:not([data-motion="system"]) button:hover{filter:none}
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,html[data-motion="off"] *::after{
+  transition:none!important;animation:none!important}
+html[data-motion="on"] .spin{animation:sp 1s linear infinite!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);
   font-size:var(--fs-base);line-height:1.6;padding:28px 16px}
 .wrap{max-width:940px;margin:0 auto}
 h1{font-size:26px;font-weight:600;letter-spacing:2px;margin-bottom:6px}
 .sub{color:var(--sub);font-size:var(--fs-label);margin-bottom:16px;line-height:1.6}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin-bottom:16px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px 22px;margin-bottom:16px}
 .card summary{cursor:pointer;font-size:16.5px;font-weight:500;letter-spacing:1px;
   padding-left:10px;border-left:3px solid var(--accent);user-select:none}
 .card summary .tag{font-size:12.5px;color:var(--sub);font-weight:400;margin-left:8px}
 .card[open] summary{margin-bottom:14px}
 label{display:block;font-size:var(--fs-label);color:var(--sub);margin:10px 0 4px;line-height:1.5}
 input[type=text],input[type=number],input[type=password],textarea,select{
-  width:100%;border:1px solid var(--line);border-radius:6px;background:#fff;
+  width:100%;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--field);
   padding:8px 10px;font-size:15px;font-family:var(--font-sans);font-weight:400;
   color:var(--ink);line-height:1.5}
 select{cursor:pointer}
@@ -49,299 +222,507 @@ textarea.big{min-height:96px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 16px}
 @media(max-width:640px){.grid2,.grid3{grid-template-columns:1fr}}
-.char-card{border:1px dashed var(--line);border-radius:8px;padding:12px 16px;margin-bottom:14px;background:#fffef9}
-.char-card .head{display:flex;justify-content:space-between;align-items:center}
+.char-card{border:1px dashed var(--line);border-radius:8px;padding:12px 16px;
+  margin-bottom:14px;background:var(--card-bg)}
+.char-card .head{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .char-card .head b{font-size:14px}
-button{font-family:var(--font-sans);cursor:pointer;border-radius:6px;border:1px solid var(--accent);
-  background:var(--accent);color:#fff;padding:8px 18px;font-size:14px;letter-spacing:.6px}
+button{font-family:var(--font-sans);cursor:pointer;border-radius:var(--radius-sm);
+  border:1px solid var(--accent);
+  background:var(--accent);color:var(--onaccent);padding:8px 18px;font-size:14px;letter-spacing:.6px;
+  min-height:24px}
 button:hover{filter:brightness(1.08)}
 button.ghost{background:transparent;color:var(--accent)}
-button.mini{padding:2px 10px;font-size:12px;border-color:var(--line);color:var(--sub);background:#fff}
-button.ico{padding:1px 8px;font-size:13px;line-height:1.5;border-color:var(--line);
-  color:var(--accent);background:#fff;letter-spacing:0}
+/* mini/ico 是密集小按钮：min-height 只保证 24px 命中区（WCAG 2.5.8），
+   用 padding 补足视觉高度，不让它们变得又高又笨。 */
+button.mini{padding:3px 11px;font-size:12px;border-color:var(--line);
+  color:var(--sub);background:var(--chip-bg);min-height:24px}
+button.ico{padding:2px 9px;font-size:13px;line-height:1.5;border-color:var(--line);
+  color:var(--accent);background:var(--chip-bg);letter-spacing:0;min-height:24px}
 button.ico:hover{border-color:var(--accent);background:var(--accent-soft)}
 button:disabled{opacity:.45;cursor:not-allowed}
 .hint{font-size:var(--fs-small);color:var(--sub);line-height:1.5}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.chip{font-size:12.5px;border:1px solid var(--line);background:#fff;color:var(--sub);
+.chip{font-size:12.5px;border:1px solid var(--line);background:var(--chip-bg);color:var(--sub);
   border-radius:999px;padding:3px 11px;cursor:pointer;letter-spacing:0;max-width:100%;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:24px}
 .chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
 .row-head{display:flex;align-items:center;gap:8px;margin:12px 0 0}
 .row-head .rl{font-size:13px;color:var(--sub);margin:0}
 .runrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 .runrow>div{flex:1;min-width:150px}
 .secbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px;
-  padding-top:12px;border-top:1px dashed var(--line)}
+  padding-top:12px;border-top:1px dashed var(--line2)}
 #board .flow{font-size:14px;margin-bottom:8px;min-height:24px}
 #board .flow b{color:var(--accent)}
 .step{padding:6px 10px;border-left:2px solid var(--line);margin-left:6px;color:var(--sub);
   font-size:var(--fs-small);line-height:1.6}
 .step.on{border-color:var(--accent);color:var(--ink)}
-/* 流式生成进度：挂在当前进行中的那一行末尾，随字数实时刷新 */
+/* 流式生成进度：挂在当前进行中的那一行末尾，随字数实时刷新。
+   aria-hidden 是因为看板已有 aria-live 播报，字数每秒都在变，
+   让读屏软件逐个念数字反而是噪音。 */
 .prog{display:inline-block;margin-left:8px;padding:1px 9px;border-radius:999px;
-  font-size:12px;background:var(--accent-soft);color:var(--accent)}
-.prog.think{background:#efece5;color:var(--sub)}
+  font-size:12px;background:var(--accent-soft);color:var(--accent);aria-hidden="true"}
+.prog.think{background:var(--line2);color:var(--sub)}
 .step.ok{border-color:var(--ok);color:var(--ok)}
 .step.bad{border-color:var(--bad);color:var(--bad)}
 .spin{display:inline-block;animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-.cmt{background:#fdf3ef;border:1px solid #eed6cc;border-radius:6px;padding:7px 10px;margin:6px 0;font-size:12px;color:#7a4030}
-.cmt.minor{background:#fbf6ea;border-color:#ead9b8;color:#7c6428}
-.cmt.reader{background:#eef3f7;border-color:#cfdae3;color:#3d566e}
-.chapter{margin-top:14px;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}
-.chapter>summary{cursor:pointer;padding:10px 14px;font-size:14px;user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cmt{background:var(--cmt-bg);border:1px solid var(--cmt-bd);border-radius:var(--radius-sm);
+  padding:7px 10px;margin:6px 0;font-size:12px;color:var(--bad)}
+.cmt.minor{background:var(--minor-bg);border-color:var(--minor-bd);color:var(--warn)}
+.cmt.reader{background:var(--info-bg);border-color:var(--info-bd);color:var(--info-ink)}
+.chapter{margin-top:14px;border:1px solid var(--line);border-radius:8px;
+  background:var(--field);overflow:hidden}
+.chapter>summary{cursor:pointer;padding:10px 14px;font-size:14px;user-select:none;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chapter>summary b{color:var(--accent)}
 .badge{font-size:11px;border-radius:4px;padding:1px 8px}
-.badge.ok{background:#e6f2e8;color:var(--ok)}
-.badge.warn{background:#f6e8dc;color:var(--warn)}
-.badge.mock{background:#fdf0ee;color:#8e2b23;border:1px solid #eebfb6}
+.badge.ok{background:var(--ok-bg);color:var(--ok)}
+.badge.warn{background:var(--warn-bg);color:var(--warn)}
+.badge.mock{background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad-bd)}
 .chapter .body{padding:6px 16px 16px}
-.chapter pre{white-space:pre-wrap;font-family:var(--font-serif);font-size:var(--fs-body);
-  font-weight:400;line-height:1.85;letter-spacing:.2px;margin-top:8px}
+.chapter pre{white-space:pre-wrap;font-family:var(--font-serif);font-size:var(--fs-body-eff);
+  font-weight:400;line-height:var(--lh-eff);letter-spacing:.2px;margin-top:8px}
 #memoryBox{font-family:var(--font-mono);font-size:12.5px;min-height:180px;line-height:1.6}
 .primary-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 10px}
 .primary-row .grow{flex:1}
+.primary-row button{min-height:36px;padding:8px 20px}
 .eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;
-  color:var(--sub);cursor:pointer;font-size:13px;padding:2px}
+  color:var(--sub);cursor:pointer;font-size:13px;padding:2px 6px;min-height:24px}
 .pw-wrap{position:relative}
-.notice{background:#fbf6ea;border:1px solid #ead9b8;border-radius:8px;
-  padding:10px 14px;font-size:13px;color:#7c6428;margin-bottom:16px;line-height:1.8}
-#mockWarn{background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;padding:10px 14px;
-  font-size:13px;color:#8e2b23;margin-bottom:16px;line-height:1.8}
+.notice{background:var(--minor-bg);border:1px solid var(--minor-bd);border-radius:8px;
+  padding:10px 14px;font-size:13px;color:var(--warn);margin-bottom:16px;line-height:1.8}
+#mockWarn{background:var(--bad-bg);border:1px solid var(--bad-bd);border-radius:8px;padding:10px 14px;
+  font-size:13px;color:var(--bad);margin-bottom:16px;line-height:1.8}
 #toasts{position:fixed;left:50%;transform:translateX(-50%);top:14px;z-index:400;
   display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;max-width:90vw}
-#toasts .t{background:#2b2620;color:#fff;border-radius:8px;padding:9px 18px;font-size:13px;
-  box-shadow:0 4px 16px rgba(0,0,0,.18)}
-#toasts .t.err{background:#8e2b23}
-#toasts .t.ok{background:#2f6a3a}
+#toasts .t{background:var(--toast-bg);color:var(--toast-ink);border-radius:8px;
+  padding:9px 18px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.18)}
+#toasts .t.err{background:var(--bad);color:var(--onaccent)}
+#toasts .t.ok{background:var(--ok);color:var(--onaccent)}
 #jsState{font-size:12px;border-radius:8px;padding:7px 12px;margin-bottom:14px;line-height:1.6}
-#jsState.off{background:#fdf0ee;border:1px solid #eebfb6;color:#8e2b23;font-weight:bold}
-#jsState.on{background:#eef6ef;border:1px solid #cfe3d2;color:#2f6a3a}
+#jsState.off{background:var(--bad-bg);border:1px solid var(--bad-bd);color:var(--bad);font-weight:bold}
+#jsState.on{background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok)}
 /* 确认框：必须做成「铺满视口的模态」，不能是文档流里的一条横幅。
    原先它挂在页面最顶部，而「开始创作」按钮在页面底部 —— 用户点下去看不到
    任何反应，要手动滚到顶端才发现有提示。模态层不受滚动位置影响。 */
 #confirmBar{display:none;position:fixed;inset:0;z-index:200;
-  background:rgba(28,24,20,.42);align-items:center;justify-content:center;padding:24px}
-#confirmBar .cf-box{background:#fbf6ea;border:1px solid #ead9b8;border-radius:12px;
-  padding:18px 20px;font-size:13.5px;color:#7c6428;max-width:470px;width:100%;
-  line-height:1.8;box-shadow:0 14px 44px rgba(0,0,0,.3)}
+  background:var(--overlay);align-items:center;justify-content:center;padding:24px}
+#confirmBar .cf-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:18px 20px;font-size:13.5px;color:var(--ink);max-width:470px;width:100%;
+  line-height:1.8;box-shadow:var(--shadow)}
 #confirmBar #confirmText{display:block;white-space:pre-wrap;word-break:break-word}
 #confirmBar .cf-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;
   flex-wrap:wrap}
 #confirmBar .cf-actions button{padding:7px 16px;font-size:13px;letter-spacing:.4px}
-#errBox{display:none;background:#fdf0ee;border:1px solid #eebfb6;border-radius:8px;
-  padding:10px 14px;font-size:12px;color:#8e2b23;margin-bottom:14px;
-  font-family:Consolas,monospace;white-space:pre-wrap;line-height:1.7}
+/* 模态打开时背景内容对读屏隐藏（由 JS 切 inert，见 askConfirm）。
+   模糊加在 .shell 上：确认框自己也在 .shell 里，blur(1px) 幅度极小，
+   与改动前（加在 .wrap 上、同样罩住确认框）观感一致，不算回退。 */
+body.modal-open .shell{filter:blur(1px)}
+#errBox{display:none;background:var(--bad-bg);border:1px solid var(--bad-bd);border-radius:8px;
+  padding:10px 14px;font-size:12px;color:var(--bad);margin-bottom:14px;
+  font-family:var(--font-mono),Consolas,monospace;white-space:pre-wrap;line-height:1.7}
 .resolved{font-size:12px;color:var(--sub);margin-top:6px}
 .resolved b{color:var(--accent)}
 /* 界面小字统一走思源黑体：小字号下比宋体清晰得多。
    小说正文（.chapter pre）、页面标题、板块标题仍用思源宋体，保留书卷感。 */
 .sub,label,.hint,.resolved,.chip,.step,.cmt,.badge,.notice,#mockWarn,#jsState,
 #confirmBar,#toasts .t,#board .flow,.card summary .tag,.pick-btn,.picker .pi,
-.picker .ph,#connBox,.runrow,.secbar,button{font-family:var(--font-sans)}
+.picker .ph,#connBox,.runrow,.secbar,button,.skip,.settings-panel,
+.settings-btn,.style-opt,.setting-row{font-family:var(--font-sans)}
 #connBox code,.errmsg,#errBox,.picker .pi b{font-family:var(--font-mono)}
 /* 模型版本选择器 */
 .pick-wrap{position:relative;display:flex;gap:6px}
 .pick-wrap input{flex:1;min-width:0}
-.pick-btn{flex:0 0 36px;border:1px solid var(--line);background:#fff;border-radius:8px;
-  cursor:pointer;font-size:13px;color:var(--sub)}
+/* ▾ 按钮：aria-expanded 由 JS 同步；补足 24px 命中区 */
+.pick-btn{flex:0 0 36px;border:1px solid var(--line);background:var(--chip-bg);
+  border-radius:8px;cursor:pointer;font-size:13px;color:var(--sub);min-height:24px}
 .pick-btn:hover{border-color:var(--accent);color:var(--accent)}
+/* 自定义列表框：role=listbox 由 JS 挂上，选项是 button 而非 div（键盘可达） */
 .picker{display:none;position:absolute;z-index:40;top:calc(100% + 4px);left:0;right:0;
-  max-height:270px;overflow:auto;background:#fff;border:1px solid var(--line);
-  border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.13);padding:5px}
+  max-height:270px;overflow:auto;background:var(--field);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.13);padding:5px}
 .picker.show{display:block}
-.picker .pi{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12.5px;line-height:1.45}
-.picker .pi:hover{background:var(--accent-soft)}
-.picker .pi b{font-family:Consolas,monospace;font-size:12.5px;color:var(--ink)}
+.picker .pi{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12.5px;
+  line-height:1.45;display:block;width:100%;text-align:left;min-height:24px}
+.picker .pi:hover,.picker .pi:focus-visible{background:var(--accent-soft)}
+.picker .pi b{font-family:var(--font-mono),Consolas,monospace;font-size:12.5px;
+  color:var(--ink);font-weight:500}
 .picker .pi span{display:block;color:var(--sub);font-size:11.5px}
-.picker .pi.cur{background:var(--accent-soft)}
+.picker .pi.cur{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
 .picker .pi .ftbadge{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;
-  font-style:normal;font-size:10.5px;background:#fdf0ee;color:#8e2b23;border:1px solid #eebfb6}
+  font-style:normal;font-size:10.5px;background:var(--bad-bg);color:var(--bad);
+  border:1px solid var(--bad-bd)}
 .picker .ph{padding:9px 10px;color:var(--sub);font-size:12px;line-height:1.7}
 .conn-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
-.errmsg{font-family:Consolas,monospace;font-size:12.5px;line-height:1.7;margin-top:4px;
-  white-space:pre-wrap}
-#connBox{display:none;margin-top:10px;border-radius:10px;padding:11px 14px;
+.errmsg{font-family:var(--font-mono),Consolas,monospace;font-size:12.5px;line-height:1.7;
+  margin-top:4px;white-space:pre-wrap}
+#connBox{display:none;margin-top:10px;border-radius:var(--radius);padding:11px 14px;
   font-size:12.5px;line-height:1.85}
-#connBox.ok{background:#eef6ef;border:1px solid #cfe3d2;color:#245a30}
-#connBox.bad{background:#fdf0ee;border:1px solid #eebfb6;color:#8e2b23}
-#connBox.pending{background:#fbf6ea;border:1px solid #ead9b8;color:#7c6428}
-#connBox code{font-family:Consolas,monospace;background:rgba(0,0,0,.06);
+#connBox.ok{background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok)}
+#connBox.bad{background:var(--bad-bg);border:1px solid var(--bad-bd);color:var(--bad)}
+#connBox.pending{background:var(--warn-bg);border:1px solid var(--warn-bd);color:var(--warn)}
+#connBox code{font-family:var(--font-mono),Consolas,monospace;background:rgba(127,127,127,.16);
   padding:1px 5px;border-radius:4px}
 #connBox .mini-list{margin-top:8px;max-height:160px;overflow:auto}
-#connBox .mini-list span{display:inline-block;background:rgba(0,0,0,.06);border-radius:5px;
-  padding:2px 8px;margin:2px 5px 2px 0;cursor:pointer;font-family:Consolas,monospace;font-size:11.5px}
-#connBox .mini-list span:hover{background:var(--accent);color:#fff}
+#connBox .mini-list button{display:inline-block;background:rgba(127,127,127,.16);
+  border:1px solid transparent;border-radius:5px;color:inherit;cursor:pointer;
+  padding:2px 8px;margin:2px 5px 2px 0;font-family:var(--font-mono),Consolas,monospace;
+  font-size:11.5px;min-height:24px;line-height:20px;letter-spacing:0}
+#connBox .mini-list button:hover{background:var(--accent);color:var(--onaccent)}
+/* ───────── 设置菜单 ─────────
+   为什么从「一行铺开的主题按钮」改成「一个设置按钮 + 下拉面板」：
+   ① 6 套风格平铺占掉整条工具栏，窄屏换行后把「开始创作」挤到很下面；
+   ② 设置面板是可扩展的容器——以后加字号、行高、密度、导出、快捷键说明
+      都往 SETTINGS_PANEL 里加一节，不用再改工具栏结构。
+   实现按 WAI-ARIA 菜单按钮模式：aria-expanded 同步状态、Esc 关闭、
+   ↑↓/Home/End 在选项间移动、关闭后焦点归还触发按钮。 */
+.settings{position:relative;margin-left:auto;padding-left:12px}
+.settings-btn{display:flex;align-items:center;gap:6px;
+  padding:4px 12px;font-size:12.5px;min-height:26px;
+  background:var(--chip-bg);color:var(--ink);border-color:var(--line)}
+.settings-btn:hover{border-color:var(--accent);color:var(--accent)}
+.settings-btn .gear{font-size:14px;line-height:1}
+.settings-btn .cur{color:var(--sub);font-size:11.5px}
+.settings-panel{display:none;position:absolute;z-index:60;top:calc(100% + 6px);right:0;
+  width:min(330px,calc(100vw - 40px));max-height:min(70vh,540px);overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:6px}
+.settings-panel.show{display:block}
+/* 面板内每一节：标题 + 内容。标题用 .sec-h，附上 sr-only 的分组说明。 */
+.settings-sec+.settings-sec{border-top:1px solid var(--line2);margin-top:6px;padding-top:8px}
+.settings-sec .sec-h{display:block;font-size:11.5px;color:var(--sub);
+  letter-spacing:.5px;padding:4px 8px 6px}
+.settings-sec .sec-h b{color:var(--ink);font-weight:500;letter-spacing:1px}
+/* 风格选项：整行可点（比小圆点好按），色板 + 名称 + 说明 */
+.style-opt{display:flex;align-items:center;gap:10px;width:100%;
+  padding:7px 9px;font-size:12.5px;min-height:40px;text-align:left;
+  background:transparent;color:var(--ink);border:1px solid transparent;
+  border-radius:var(--radius-sm);letter-spacing:0}
+.style-opt:hover{background:var(--accent-soft);border-color:var(--line)}
+.style-opt[aria-checked="true"]{background:var(--accent-soft);border-color:var(--accent)}
+/* 色板：把该主题的 4 个代表色排成一条，替代无法在 CSS 里生成缩略图的问题 */
+.style-sw{display:flex;flex:none;width:38px;height:20px;border:1px solid var(--line);
+  border-radius:3px;overflow:hidden}
+.style-sw i{flex:1;display:block}
+.style-txt{flex:1;min-width:0}
+.style-txt b{display:block;font-weight:500;font-size:12.5px;line-height:1.4}
+.style-txt span{display:block;color:var(--sub);font-size:11px;line-height:1.45}
+.style-opt[aria-checked="true"] .style-txt b::after{content:" ·当前";color:var(--accent)}
+/* 开关行：字号 / 行高这类连续量 */
+.setting-row{display:flex;align-items:center;gap:8px;padding:6px 9px;min-height:34px}
+.setting-row .lab{flex:1;min-width:0;font-size:12.5px;color:var(--ink);line-height:1.4}
+.setting-row .lab small{display:block;color:var(--sub);font-size:11px}
+.setting-row input[type=range]{flex:1.4;min-width:90px;accent-color:var(--accent);height:24px}
+.setting-row .val{flex:0 0 46px;text-align:right;font-family:var(--font-mono);
+  font-size:11.5px;color:var(--sub)}
+.setting-row select{flex:1;min-width:0;padding:4px 6px;font-size:12.5px;
+  min-height:30px;width:auto}
+@media(max-width:640px){
+  .settings{margin-left:0;padding-left:0;width:100%}
+  .settings-panel{right:auto;left:0;width:100%}
+}
+/* 设置面板里的 footer 提示行 */
+.settings-foot{padding:7px 9px 4px;font-size:11px;color:var(--sub);line-height:1.6}
+.settings-foot kbd{font-family:var(--font-mono);font-size:10.5px;
+  border:1px solid var(--line);border-radius:3px;padding:0 4px}
+/* ───────── 两侧栏：左目录 / 右状态 ─────────
+   为什么加：正文限宽 940px 居中，1600px 宽的屏上两侧各空出 300px 纯留白，
+   既浪费，又让长页面不好定位（要滚过 5 张卡片才够得着「开始创作」）。
+   这里把留白用起来：左栏是「页面导航 + 章节目录」，右栏是「跑到哪了 + 记忆库有多少条」。
+   1240px 以下侧栏整体 display:none，页面退化成原来的单列，布局与可读性完全不变。
+   不用 position:fixed —— 固定层会盖住页脚、抢走点击，吸顶（sticky）更稳。 */
+.shell{display:block}
+.rail{display:none}
+@media(min-width:1240px){
+  .shell{display:grid;grid-template-columns:196px minmax(0,940px) 236px;
+    column-gap:20px;justify-content:center;align-items:start}
+  /* align-self:start 是 sticky 生效的前提：栅格项默认 stretch 会把高度拉满，
+     那样 position:sticky 就没有可移动的空间，侧栏不会跟滚。 */
+  .rail{display:block;position:sticky;top:14px;align-self:start;
+    max-height:calc(100vh - 28px);overflow-y:auto;overscroll-behavior:contain}
+}
+.center{min-width:0}          /* 栅格列默认 min-width:auto，长内容会撑破列宽 */
+/* 锚点跳转的落点：给视口顶边留 14px 余量，否则标题会被切掉。
+   .chapter 也要给：章节目录跳过去时同样会顶边。 */
+#sec-req,#sec-char,#sec-world,#sec-adv,#sec-run,#board,#memoryCard,#resultCard,
+.chapter{scroll-margin-top:14px}
+/* 侧栏里的每一块。配色只取已验算过的 token 组合（--sub/--ink on --panel），
+   所以六套主题都不用另外调色。 */
+.rblk{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 14px;margin-bottom:12px;font-family:var(--font-sans)}
+.rblk[hidden]{display:none}
+.rh{font-size:11.5px;letter-spacing:1px;color:var(--sub);font-weight:500;margin:0 0 8px}
+/* 目录 */
+.toc{list-style:none;margin:0;padding:0}
+.toc li+li{margin-top:1px}
+.toc a{display:block;padding:4px 8px;font-size:12.5px;line-height:1.5;
+  color:var(--sub);text-decoration:none;border-radius:var(--radius-sm);
+  border-left:2px solid transparent;min-height:24px}
+.toc a:hover{background:var(--accent-soft);color:var(--ink)}
+.toc a:focus-visible{outline-offset:-2px}
+.toc a[aria-current="true"]{color:var(--accent);border-left-color:var(--accent);
+  background:var(--accent-soft)}
+.toc .cnum{font-family:var(--font-mono);font-size:11px;color:var(--sub);margin-right:5px}
+/* 右栏：流水线状态 */
+.rstate{display:flex;align-items:center;gap:7px;margin:0 0 6px;font-size:13px}
+.rstate b{font-weight:500}
+.rdot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.rdot.run{background:var(--accent)}
+.rdot.ok{background:var(--ok)}
+.rdot.stop{background:var(--warn)}
+.rdot.bad{background:var(--bad)}
+.rstage{font-size:12px;color:var(--sub);line-height:1.6;margin:0 0 9px;min-height:3.2em}
+.rbar{height:4px;border-radius:2px;background:var(--line2);overflow:hidden;margin:0 0 9px}
+.rbar i{display:block;height:100%;width:0;background:var(--accent);
+  transition:width .3s ease}
+.rkv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;
+  line-height:1.75;margin:0}
+.rkv>span{color:var(--sub);flex:none}
+.rkv b{font-weight:500;text-align:right;overflow-wrap:anywhere}  /* 模型名很长，允许断行 */
+.rkv b.warn{color:var(--bad)}
+@media (prefers-reduced-motion:reduce){.rbar i{transition:none}}
+html[data-theme="swiss"] .rbar,html[data-theme="swiss"] .rdot{border-radius:0}
+html[data-theme="swiss"] .rblk{border-width:2px;border-left-width:6px}
 </style>
 </head>
 <body>
+<a class="skip" href="#main">跳到主要内容</a>
+<!-- 确认框：铺满视口的模态层（见 #confirmBar 的 CSS 注释）。
+     role/aria-modal 让读屏软件能正确播报，而不是当成普通正文；
+     焦点陷阱与焦点归还见 askConfirm。
+     为什么挂在 body 下、不放进 .shell：模态打开时会给 .shell 加 filter:blur，
+     而 filter 会给元素创建 fixed 定位的包含块 —— 留在里面的话
+     position:fixed;inset:0 会相对中间列而不是视口，遮罩只盖住一条。 -->
+<div id="confirmBar" role="dialog" aria-modal="true" aria-labelledby="confirmText"
+     aria-describedby="confirmText">
+  <div class="cf-box">
+    <div id="confirmText"></div>
+    <div class="cf-actions">
+      <button type="button" class="mini" id="confirmNo">取消</button>
+      <button type="button" id="confirmYes">确定</button>
+    </div>
+  </div>
+</div>
+<!-- 三栏骨架：左目录 / 中间正文 / 右状态。窄屏退化为单列（见 .shell 的 CSS 注释）。 -->
+<div class="shell">
+<!-- 左栏：本页目录 + 已定稿章节目录。窄屏由 CSS 隐藏，DOM 仍保留（读屏用户仍能走到）。 -->
+<aside class="rail" id="railL" aria-label="页面目录">
+  <div class="rblk">
+    <h2 class="rh">本页目录</h2>
+    <ul class="toc">
+      <li><a href="#sec-req">核心需求</a></li>
+      <li><a href="#sec-char">人物卡</a></li>
+      <li><a href="#sec-world">世界观与目标</a></li>
+      <li><a href="#sec-adv">进阶选项</a></li>
+      <li><a href="#sec-run">运行设置</a></li>
+      <li><a href="#board" data-sec-opt="1">流水线看板</a></li>
+      <li><a href="#memoryCard" data-sec-opt="1">全局记忆库</a></li>
+      <li><a href="#resultCard" data-sec-opt="1">创作结果</a></li>
+    </ul>
+  </div>
+  <div class="rblk" id="tocChapters" hidden>
+    <h2 class="rh">已定稿章节</h2>
+    <ul class="toc" id="tocChapterList"></ul>
+  </div>
+</aside>
+<div class="center">
+<header>
 <div class="wrap">
   <h1>小说多 Agent 创作工坊</h1>
   <div class="sub">策划 → 撰稿 → 校对（可打回重写，上限 3 轮）→ 润色 → 记忆结算 · 多平台模型 · LangGraph 流水线</div>
 
-  <div id="jsState" class="off">⚠ 页面脚本尚未运行 —— 若此处持续为红色，说明当前预览面板禁用了 JavaScript，
+  <div id="jsState" class="off" role="status" aria-live="polite">⚠ 页面脚本尚未运行 —— 若此处持续为红色，说明当前预览面板禁用了 JavaScript，
     请用 Chrome / Edge 直接打开 <b>http://127.0.0.1:8765</b>（按钮才会有反应）。</div>
-  <div id="errBox"></div>
-  <!-- 确认框：铺满视口的模态层（见 #confirmBar 的 CSS 注释）。
-       role/aria-modal 让读屏软件能正确播报，而不是当成普通正文。 -->
-  <div id="confirmBar" role="dialog" aria-modal="true" aria-labelledby="confirmText">
-    <div class="cf-box">
-      <div id="confirmText"></div>
-      <div class="cf-actions">
-        <button type="button" class="mini" id="confirmNo">取消</button>
-        <button type="button" id="confirmYes">确定</button>
-      </div>
-    </div>
-  </div>
+  <div id="errBox" role="alert"></div>
+  <div id="restoreBar" role="status" aria-live="polite" style="display:none;background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.75"></div>
 
-  <div id="restoreBar" style="display:none;background:#eef6ef;border:1px solid #cfe3d2;color:#245a30;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.75"></div>
-
-  <div class="toolbar">
+  <nav class="toolbar" aria-label="项目工具">
     <button type="button" class="mini" onclick="fillDemo()">填充示例</button>
     <button type="button" class="mini" onclick="saveProject()">保存项目</button>
     <button type="button" class="mini" onclick="document.getElementById('loadFile').click()">加载项目</button>
     <button type="button" class="mini" onclick="resetForm()">重置表单</button>
     <button type="button" class="mini" onclick="newStory()" title="清空当前会话与页面内容，开始写一篇新的">新建故事</button>
-    <input type="file" id="loadFile" accept=".json" style="display:none" onchange="loadProject(this)">
-  </div>
+    <input type="file" id="loadFile" accept=".json" style="display:none" onchange="loadProject(this)"
+      aria-label="选择项目 JSON 文件">
+    <!-- 设置：风格切换 + 阅读设置。面板可扩展，以后加新功能往这里加一节。 -->
+    <div class="settings">
+      <button type="button" class="mini settings-btn" id="settingsBtn"
+        aria-haspopup="true" aria-expanded="false" aria-controls="settingsPanel">
+        <span class="gear" aria-hidden="true">⚙</span>
+        <span>设置</span>
+        <span class="cur" id="settingsCur"></span>
+      </button>
+      <div class="settings-panel" id="settingsPanel" role="dialog"
+        aria-label="界面设置" hidden></div>
+    </div>
+  </nav>
+</div>
+</header>
 
+<main id="main" class="wrap" tabindex="-1">
   <!-- 核心需求 -->
-  <details class="card" open>
+  <details class="card" id="sec-req" open>
     <summary>核心需求 <span class="tag">题材、基调、篇幅、核心看点</span></summary>
+    <label for="requirement">用一段话说清你要的故事</label>
     <textarea id="requirement" class="big" placeholder="一段话说清你要的故事，只言片语也行，后面可以点「AI 润色需求」扩写。"></textarea>
     <div class="row-head">
-      <span class="rl">示例题材（点 ⟳ 换一批）</span>
-      <button type="button" class="ico" onclick="shuffle('req')" title="换一批">⟳</button>
+      <span class="rl" id="lbl-chips-req">示例题材（点 ⟳ 换一批）</span>
+      <button type="button" class="ico" onclick="shuffle('req')" title="换一批示例题材"
+        aria-label="换一批示例题材">⟳</button>
     </div>
-    <div class="chips" id="chips-req" data-target="#requirement" data-mode="set" data-n="6"></div>
+    <div class="chips" id="chips-req" data-target="#requirement" data-mode="set" data-n="6"
+      role="group" aria-labelledby="lbl-chips-req"></div>
     <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
       <button type="button" class="ghost" id="polishBtn" onclick="polishReq()">AI 润色需求</button>
       <button type="button" class="mini" id="revertBtn" style="display:none" onclick="revertReq()">还原</button>
-      <span class="hint" id="polishHint">只言片语也能扩成完整需求，润色后可还原</span>
+      <span class="hint" id="polishHint" role="status" aria-live="polite">只言片语也能扩成完整需求，润色后可还原</span>
     </div>
   </details>
 
   <!-- 人物卡 -->
-  <details class="card" open>
+  <details class="card" id="sec-char" open>
     <summary>人物卡 <span class="tag">可自己填，也可交给策划 Agent 自动生成</span></summary>
-    <label style="margin-top:0"><input type="checkbox" id="autoChars" style="width:auto;margin-right:6px"
-      onchange="onAutoCharsChange()">由策划 Agent 自动设计人物（勾选后本节内容不参与生成）</label>
+    <label for="autoChars" style="margin-top:0;display:flex;align-items:flex-start;gap:6px;cursor:pointer">
+      <input type="checkbox" id="autoChars" style="width:auto"
+        onchange="onAutoCharsChange()">由策划 Agent 自动设计人物（勾选后本节内容不参与生成）</label>
     <div id="charArea">
-      <div id="chars"></div>
+      <h3 class="sr-only" id="charListLabel">人物卡列表</h3>
+      <div id="chars" role="group" aria-labelledby="charListLabel"></div>
       <button type="button" class="ghost mini" onclick="addChar()">＋ 添加人物</button>
     </div>
     <div class="secbar">
       <button type="button" class="ghost mini" id="fill-characters" onclick="aiFill('characters',false)">AI 补全人物卡</button>
       <button type="button" class="ghost mini" id="fill-characters-ov" onclick="aiFill('characters',true)">AI 重写人物卡</button>
-      <span class="hint" id="fillHint-characters">补全只填空缺，重写会覆盖你已填内容</span>
+      <span class="hint" id="fillHint-characters" role="status" aria-live="polite">补全只填空缺，重写会覆盖你已填内容</span>
     </div>
   </details>
 
   <!-- 世界观 + 目标 -->
-  <details class="card" open>
+  <details class="card" id="sec-world" open>
     <summary>世界观与故事目标</summary>
-    <div class="row-head"><span class="rl">时代与环境</span>
-      <button type="button" class="ico" onclick="shuffle('era')" title="换一批">⟳</button></div>
+    <div class="row-head"><label class="rl" for="world_era">时代与环境</label>
+      <button type="button" class="ico" onclick="shuffle('era')" title="换一批时代与环境"
+        aria-label="换一批时代与环境">⟳</button></div>
     <input type="text" id="world_era" list="dl-era" placeholder="例：南方水乡小镇">
-    <div class="chips" id="chips-era" data-target="#world_era" data-mode="set" data-n="4"></div>
+    <div class="chips" id="chips-era" data-target="#world_era" data-mode="set" data-n="4"
+      role="group" aria-label="时代与环境示例"></div>
 
-    <div class="row-head"><span class="rl">世界 / 力量规则</span>
-      <button type="button" class="ico" onclick="shuffle('rules')" title="换一批">⟳</button></div>
+    <div class="row-head"><label class="rl" for="world_rules">世界 / 力量规则</label>
+      <button type="button" class="ico" onclick="shuffle('rules')" title="换一批世界规则"
+        aria-label="换一批世界规则">⟳</button></div>
     <input type="text" id="world_rules" list="dl-rules" placeholder="例：现实向，无超自然">
-    <div class="chips" id="chips-rules" data-target="#world_rules" data-mode="set" data-n="4"></div>
+    <div class="chips" id="chips-rules" data-target="#world_rules" data-mode="set" data-n="4"
+      role="group" aria-label="世界规则示例"></div>
 
-    <div class="row-head"><span class="rl">关键地点与物品</span>
-      <button type="button" class="ico" onclick="shuffle('locations')" title="换一批">⟳</button></div>
+    <div class="row-head"><label class="rl" for="world_locations">关键地点与物品</label>
+      <button type="button" class="ico" onclick="shuffle('locations')" title="换一批地点与物品"
+        aria-label="换一批地点与物品">⟳</button></div>
     <input type="text" id="world_locations" list="dl-locations" placeholder="例：老堤防、半页笔记">
-    <div class="chips" id="chips-locations" data-target="#world_locations" data-mode="set" data-n="4"></div>
+    <div class="chips" id="chips-locations" data-target="#world_locations" data-mode="set" data-n="4"
+      role="group" aria-label="地点与物品示例"></div>
 
     <div class="grid2" style="margin-top:6px">
       <div>
-        <div class="row-head"><span class="rl">主角目标</span>
-          <button type="button" class="ico" onclick="shuffle('goal')" title="换一批">⟳</button></div>
+        <div class="row-head"><label class="rl" for="goal">主角目标</label>
+          <button type="button" class="ico" onclick="shuffle('goal')" title="换一批主角目标"
+            aria-label="换一批主角目标">⟳</button></div>
         <input type="text" id="goal" list="dl-goal" placeholder="例：查清父亲失踪的真相">
-        <div class="chips" id="chips-goal" data-target="#goal" data-mode="set" data-n="3"></div>
+        <div class="chips" id="chips-goal" data-target="#goal" data-mode="set" data-n="3"
+          role="group" aria-label="主角目标示例"></div>
       </div>
       <div>
-        <div class="row-head"><span class="rl">核心冲突</span>
-          <button type="button" class="ico" onclick="shuffle('conflict')" title="换一批">⟳</button></div>
+        <div class="row-head"><label class="rl" for="conflict">核心冲突</label>
+          <button type="button" class="ico" onclick="shuffle('conflict')" title="换一批核心冲突"
+            aria-label="换一批核心冲突">⟳</button></div>
         <input type="text" id="conflict" list="dl-conflict" placeholder="例：真相与安全的取舍">
-        <div class="chips" id="chips-conflict" data-target="#conflict" data-mode="set" data-n="3"></div>
+        <div class="chips" id="chips-conflict" data-target="#conflict" data-mode="set" data-n="3"
+          role="group" aria-label="核心冲突示例"></div>
       </div>
     </div>
     <div class="secbar">
       <button type="button" class="ghost mini" id="fill-world" onclick="aiFill('world',false)">AI 补全世界观与目标</button>
       <button type="button" class="ghost mini" id="fill-world-ov" onclick="aiFill('world',true)">AI 重写</button>
-      <span class="hint" id="fillHint-world">补全只填空缺，重写会覆盖你已填内容</span>
+      <span class="hint" id="fillHint-world" role="status" aria-live="polite">补全只填空缺，重写会覆盖你已填内容</span>
     </div>
   </details>
 
   <!-- 进阶选项 -->
-  <details class="card">
+  <details class="card" id="sec-adv">
     <summary>进阶选项 <span class="tag">可选：文风 / 字数 / 伏笔 / 悬念 / 禁止内容</span></summary>
-    <div class="row-head"><span class="rl">文风参考片段（只模仿语气节奏，不抄原句）</span></div>
+    <div class="row-head"><label class="rl" for="style_sample">文风参考片段（只模仿语气节奏，不抄原句）</label></div>
     <textarea id="style_sample" placeholder="贴一段你喜欢的文风，或点下方「AI 补全」自动写一段样例……"></textarea>
 
     <div class="grid3" style="margin-top:4px">
-      <div><label>每章字数</label><input type="number" id="word_count" placeholder="例：3000"></div>
+      <div><label for="word_count">每章字数</label><input type="number" id="word_count" placeholder="例：3000"></div>
       <div>
-        <div class="row-head"><span class="rl">每章必须埋的伏笔</span>
-          <button type="button" class="ico" onclick="shuffle('foreshadow')" title="换一批">⟳</button></div>
+        <div class="row-head"><label class="rl" for="foreshadow">每章必须埋的伏笔</label>
+          <button type="button" class="ico" onclick="shuffle('foreshadow')" title="换一批伏笔"
+            aria-label="换一批伏笔">⟳</button></div>
         <input type="text" id="foreshadow" list="dl-foreshadow">
-        <div class="chips" id="chips-foreshadow" data-target="#foreshadow" data-mode="set" data-n="3"></div>
+        <div class="chips" id="chips-foreshadow" data-target="#foreshadow" data-mode="set" data-n="3"
+          role="group" aria-label="伏笔示例"></div>
       </div>
       <div>
-        <div class="row-head"><span class="rl">结尾悬念要求</span>
-          <button type="button" class="ico" onclick="shuffle('cliffhanger')" title="换一批">⟳</button></div>
+        <div class="row-head"><label class="rl" for="cliffhanger">结尾悬念要求</label>
+          <button type="button" class="ico" onclick="shuffle('cliffhanger')" title="换一批悬念要求"
+            aria-label="换一批悬念要求">⟳</button></div>
         <input type="text" id="cliffhanger" list="dl-cliffhanger">
-        <div class="chips" id="chips-cliffhanger" data-target="#cliffhanger" data-mode="set" data-n="3"></div>
+        <div class="chips" id="chips-cliffhanger" data-target="#cliffhanger" data-mode="set" data-n="3"
+          role="group" aria-label="悬念要求示例"></div>
       </div>
     </div>
 
-    <div class="row-head"><span class="rl">禁止内容（一行一条，点选即追加）</span>
-      <button type="button" class="ico" onclick="shuffle('forbidden')" title="换一批">⟳</button></div>
+    <div class="row-head"><label class="rl" for="forbidden">禁止内容（一行一条，点选即追加）</label>
+      <button type="button" class="ico" onclick="shuffle('forbidden')" title="换一批禁止内容"
+        aria-label="换一批禁止内容">⟳</button></div>
     <textarea id="forbidden" placeholder="例：&#10;主角不得使用枪械"></textarea>
-    <div class="chips" id="chips-forbidden" data-target="#forbidden" data-mode="line" data-n="6"></div>
+    <div class="chips" id="chips-forbidden" data-target="#forbidden" data-mode="line" data-n="6"
+      role="group" aria-label="禁止内容示例"></div>
 
     <div style="margin-top:14px">
-      <div class="row-head"><span class="rl">角色禁忌 / OOC 红线（点选即追加到每个人物卡）</span>
-        <button type="button" class="ico" onclick="shuffle('taboo')" title="换一批">⟳</button></div>
-      <div class="chips" id="chips-taboo" data-target="" data-mode="line" data-n="6"></div>
+      <div class="row-head"><span class="rl" id="lbl-chips-taboo">角色禁忌 / OOC 红线（点选即追加到每个人物卡）</span>
+        <button type="button" class="ico" onclick="shuffle('taboo')" title="换一批角色禁忌"
+          aria-label="换一批角色禁忌">⟳</button></div>
+      <div class="chips" id="chips-taboo" data-target="" data-mode="line" data-n="6"
+        role="group" aria-labelledby="lbl-chips-taboo"></div>
     </div>
 
     <div class="secbar">
       <button type="button" class="ghost mini" id="fill-advanced" onclick="aiFill('advanced',false)">AI 补全进阶选项</button>
       <button type="button" class="ghost mini" id="fill-advanced-ov" onclick="aiFill('advanced',true)">AI 重写</button>
-      <span class="hint" id="fillHint-advanced">补全只填空缺，重写会覆盖你已填内容</span>
+      <span class="hint" id="fillHint-advanced" role="status" aria-live="polite">补全只填空缺，重写会覆盖你已填内容</span>
     </div>
   </details>
 
   <!-- 运行设置 -->
-  <details class="card" open>
+  <details class="card" id="sec-run" open>
     <summary>运行设置 <span class="tag">平台 / 模型 / Mock</span></summary>
-    <label style="margin-top:0">API 平台（选平台名即可，接口地址与模型名已内置）</label>
+    <label for="provider">API 平台（选平台名即可，接口地址与模型名已内置）</label>
     <select id="provider" onchange="onProviderChange()"></select>
-    <div class="resolved" id="resolvedInfo"></div>
+    <div class="resolved" id="resolvedInfo" role="status" aria-live="polite"></div>
     <div class="runrow" style="margin-top:10px">
-      <div><label>本次生成章节数（上限 5）</label><input type="number" id="chapters" value="3" min="1" max="5"></div>
-      <div style="flex:2"><label>API Key（本地模型可不填）</label>
+      <div><label for="chapters">本次生成章节数（上限 5）</label><input type="number" id="chapters" value="3" min="1" max="5"></div>
+      <div style="flex:2"><label for="api_key">API Key（本地模型可不填）</label>
         <div class="pw-wrap"><input type="password" id="api_key" placeholder="sk-...">
-        <button type="button" class="eye" onclick="togglePw(this)">显示</button></div>
-        <label class="hint" style="margin-top:5px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <button type="button" class="eye" onclick="togglePw(this)"
+          aria-label="显示 API Key" aria-pressed="false">显示</button></div>
+        <label class="hint" for="rememberKey" style="margin-top:5px;display:flex;align-items:flex-start;gap:6px;cursor:pointer">
           <input type="checkbox" id="rememberKey" style="width:auto">
           <span>记住在本机（存本机浏览器，不清缓存就一直在；公用电脑请取消勾选）</span></label>
       </div>
     </div>
     <div class="runrow" style="margin-top:6px">
-      <div style="flex:2"><label>Base URL</label><input type="text" id="base_url" placeholder="选平台后自动填入"></div>
+      <div style="flex:2"><label for="base_url">Base URL</label><input type="text" id="base_url" placeholder="选平台后自动填入"></div>
       <div style="flex:1.5">
-        <label>模型名 / 版本（点 ▾ 挑版本，也可自己填任意模型名）</label>
+        <label for="model">模型名 / 版本（点 ▾ 挑版本，也可自己填任意模型名）</label>
         <div class="pick-wrap">
-          <input type="text" id="model" placeholder="选平台后自动填入" autocomplete="off">
+          <input type="text" id="model" placeholder="选平台后自动填入" autocomplete="off"
+            role="combobox" aria-expanded="false" aria-controls="modelPicker" aria-autocomplete="list">
           <button type="button" class="pick-btn" onclick="toggleModelPicker(event)"
-            title="展开该平台的模型版本清单">▾</button>
-          <div class="picker" id="modelPicker"></div>
+            aria-label="展开该平台的模型版本清单" aria-expanded="false"
+            aria-haspopup="listbox" aria-controls="modelPicker">▾</button>
+          <div class="picker" id="modelPicker" role="listbox" aria-label="模型版本清单"></div>
         </div>
       </div>
     </div>
@@ -349,18 +730,20 @@ button:disabled{opacity:.45;cursor:not-allowed}
       <button type="button" class="ghost mini" id="testBtn" onclick="testConnection()">测试连接</button>
       <span class="hint" id="connHint">真实发一次最小请求，验证 Key / 地址 / 模型名是否都对</span>
     </div>
-    <div id="connBox"></div>
-    <label style="margin-top:10px"><input type="checkbox" id="mock" style="width:auto;margin-right:6px"
+    <div id="connBox" role="status" aria-live="polite"></div>
+    <label for="mock" style="margin-top:10px;display:flex;align-items:flex-start;gap:6px;cursor:pointer">
+      <input type="checkbox" id="mock" style="width:auto"
       onchange="onMockChange()">Mock 模式（不调用模型，用固定示例文本验证流水线流转；润色与读者反馈也会走 mock）</label>
-    <label><input type="checkbox" id="thinking" style="width:auto;margin-right:6px">
-      深度思考模式（让模型先推理再作答：更细但<b>慢数倍</b>，
-      写小说/剧本<b>建议保持关闭</b>）</label>
-    <div class="hint" style="margin:-2px 0 0 22px;line-height:1.75">
+    <label for="thinking" style="display:flex;align-items:flex-start;gap:6px;cursor:pointer">
+      <input type="checkbox" id="thinking" style="width:auto">
+      <span>深度思考模式（让模型先推理再作答：更细但<b>慢数倍</b>，
+      写小说/剧本<b>建议保持关闭</b>）</span></label>
+    <div class="hint" style="margin:2px 0 0 22px;line-height:1.75">
       DeepSeek V4 与智谱 GLM 都是<b>默认开启思考</b>的，本开关关闭时会显式下发关闭指令。<br>
       例外：智谱 <code>glm-5.3</code>／<code>glm-5.3-flash</code>／<code>glm-4.7</code>
       属于<b>强制思考</b>模型，关不掉——它们本身就慢，想快请换 <code>glm-5.2</code>／<code>glm-5.1</code>。
     </div>
-    <div id="mockWarn" style="display:none">
+    <div id="mockWarn" role="note" style="display:none">
       <b>⚠ 当前是 Mock 模式，不是真实创作。</b><br>
       Mock 模式不调用任何模型，所有章节都返回预先写死的示例文本——所以你每次看到的都是同一句话
       （例如「雨还在下。林岸握着门把手……」）。<br>
@@ -379,26 +762,29 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <span class="grow"></span>
     <button type="button" class="mini" id="unlockBtn" style="display:none" onclick="setFormLocked(false)">解锁表单</button>
   </div>
-  <div class="notice">
+  <div class="notice" role="note">
     <b>⚠️ 续写模式说明：</b><br>
     续写不会重新执行策划 Agent，修改上方【人物卡】等表单仅为页面展示，不会影响后续生成。<br>
     如需微调设定，请编辑下方【全局记忆库】（保存后续写时生效）；<br>
     如需大幅度修改人设 / 世界观 / 核心冲突，建议新建项目重新策划——记忆库仅适合细节微调，大幅修改会造成前后剧情冲突。
   </div>
 
-  <!-- 流水线看板 -->
+  <!-- 流水线看板。progress 是 aria-live=polite：生成要几分钟，
+       视障用户靠它知道跑到哪一步（原先全程静默，是本轮最严重的问题）。 -->
   <details class="card" id="board" open style="display:none">
     <summary>流水线实时看板</summary>
-    <div class="flow" id="flowNow"></div>
-    <div id="progress"></div>
+    <div class="flow" id="flowNow" role="status" aria-live="polite"></div>
+    <div id="progress" role="log" aria-live="polite" aria-relevant="additions text"
+      aria-label="流水线进度"></div>
   </details>
 
   <!-- 全局记忆库 -->
   <details class="card" id="memoryCard" style="display:none">
     <summary>全局记忆库 <span class="tag">章节摘要 / 伏笔池 / 人物快照 — 可直接编辑，续写时生效</span></summary>
+    <label for="memoryBox" class="sr-only">全局记忆库 JSON，可直接编辑</label>
     <textarea id="memoryBox" spellcheck="false"></textarea>
     <div class="chips"><button type="button" class="mini" onclick="applyMemoryEdit()">保存记忆修改（用于续写）</button>
-      <span class="hint" id="memoryHint"></span></div>
+      <span class="hint" id="memoryHint" role="status" aria-live="polite"></span></div>
   </details>
 
   <!-- 结果 -->
@@ -409,10 +795,39 @@ button:disabled{opacity:.45;cursor:not-allowed}
       <button type="button" class="mini" onclick="downloadMd()">导出全书 Markdown</button>
       <span class="hint" id="outDirHint"></span>
     </div>
-    <div id="outlinePanel" style="display:none"><pre id="outlinePre" style="white-space:pre-wrap;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px"></pre></div>
+    <div id="outlinePanel" style="display:none"><pre id="outlinePre" style="white-space:pre-wrap;font-size:12px;background:var(--field);border:1px solid var(--line);border-radius:8px;padding:12px"></pre></div>
     <div id="result"></div>
   </details>
-</div>
+</main>
+</div><!-- /.center -->
+
+<!-- 右栏：本次运行状态 + 记忆库速览。所有数字都从 runData / DOM 现算，不另存一份状态。 -->
+<aside class="rail" id="railR" aria-label="运行状态">
+  <div class="rblk">
+    <h2 class="rh">本次运行</h2>
+    <p class="rstate"><span class="rdot" id="railDot" aria-hidden="true"></span><b id="railState">空闲</b></p>
+    <p class="rstage" id="railStage">尚未开始。填好需求后点「开始创作」。</p>
+    <div class="rbar" role="presentation"><i id="railBar"></i></div>
+    <p class="rkv"><span>已定稿</span><b id="railDone">0 / 0 章</b></p>
+    <p class="rkv"><span>累计字数</span><b id="railWords">0</b></p>
+    <p class="rkv"><span>平台 / 模型</span><b id="railModel">—</b></p>
+    <p class="rkv"><span>模式</span><b id="railMode">—</b></p>
+  </div>
+  <div class="rblk" id="railMemBlk" hidden>
+    <h2 class="rh">记忆库速览</h2>
+    <p class="rkv"><span>章节摘要</span><b id="memSum">0</b></p>
+    <p class="rkv"><span>伏笔（未回收）</span><b id="memFs">0</b></p>
+    <p class="rkv"><span>伏笔超期未推进</span><b id="memFsOver">0</b></p>
+    <p class="rkv"><span>人物快照</span><b id="memChar">0</b></p>
+    <p class="rkv"><span>物资</span><b id="memItem">0</b></p>
+    <p class="rkv"><span>设定</span><b id="memSet">0</b></p>
+  </div>
+  <div class="rblk">
+    <h2 class="rh">本轮说明</h2>
+    <p class="rstage" style="min-height:0" id="railNote">—</p>
+  </div>
+</aside>
+</div><!-- /.shell -->
 
 <script>
 /* ───────── 运行时自检 + 页内提示 ───────── */
@@ -436,26 +851,215 @@ function toast(msg,type){
 }
 /* 确认框。为什么不用原生 confirm：原生弹窗会阻塞整个页面（连提示 toast 都刷不出来），
    而且在浏览器设置里可以被屏蔽掉。
-   yesLabel 用于把动作说清楚——「确定」两个字说不清"这一下会清掉东西"。 */
+   yesLabel 用于把动作说清楚——「确定」两个字说不清"这一下会清掉东西"。
+   无障碍要点（原先缺的）：
+   ① 焦点陷阱：Tab 不能跑到被遮住的背景上（WCAG 2.1.2）
+   ② 关闭后焦点归还到触发它的按钮（WCAG 2.4.3）
+   ③ 背景加 inert，读屏不会把背景内容当可交互元素播报
+   ④ 焦点在框内循环，且首尾相接 */
 function askConfirm(text,onYes,yesLabel){
   const bar=document.getElementById('confirmBar');
   if(!bar){if(window.confirm(text))onYes();return;}
+  const prevFocus=document.activeElement;      // 记住是谁开的，关闭时还回去
   document.getElementById('confirmText').textContent=text;
   const yes=document.getElementById('confirmYes'),no=document.getElementById('confirmNo');
   yes.textContent=yesLabel||'确定';
-  const onKey=(e)=>{if(e.key==='Escape')close();};
-  const close=()=>{
+  const onKey=(e)=>{
+    if(e.key==='Escape'){e.preventDefault();close();return;}
+    if(e.key!=='Tab')return;
+    // 焦点陷阱：只在「取消 / 确定」两个按钮之间循环
+    const f=[no,yes];
+    const idx=f.indexOf(document.activeElement);
+    e.preventDefault();
+    const next=(idx===-1)?0:((idx+(e.shiftKey?-1:1)+f.length)%f.length);
+    f[next].focus();
+  };
+  const close=(restore)=>{
     bar.style.display='none';yes.onclick=null;no.onclick=null;bar.onclick=null;
     document.removeEventListener('keydown',onKey);
+    document.body.classList.remove('modal-open');
+    if(restore!==false&&prevFocus&&prevFocus.focus)prevFocus.focus();
   };
   yes.onclick=()=>{close();onYes();};
-  no.onclick=close;
+  no.onclick=()=>close();
   bar.onclick=(e)=>{if(e.target===bar)close();};      /* 点背景 = 取消 */
   document.addEventListener('keydown',onKey);
   bar.style.display='flex';
+  document.body.classList.add('modal-open');
   /* 默认焦点给「取消」：确认框多半对应"要清掉东西"这类不可逆操作，
      让回车落在安全的一侧（原生 confirm 也是这个默认行为，别丢）。 */
   no.focus();
+}
+/* ───────── 主题切换（5 套风格）─────────
+   全部颜色来自 CSS 变量，切主题只改 <html data-theme>，不重绘任何规则。
+   选中的主题记在 localStorage，刷新后保持；不存在则回退宣纸书卷。 */
+const THEMES=[
+  {id:'xuan',name:'宣纸书卷',hint:'米白赭石，正文宋体，最适合长时间阅读',
+   sw:['#f6f4ef','#fffdf8','#7d4f1e','#2b2620']},
+  {id:'ye',  name:'暗色夜写',hint:'深炭琥珀，夜里写作不刺眼',
+   sw:['#1b1a18','#232220','#e0964a','#e9e5dd']},
+  {id:'desk',name:'编辑部工作台',hint:'冷灰靛蓝，工具感强、对比度最稳',
+   sw:['#f3f4f6','#ffffff','#1d4ed8','#18181b']},
+  {id:'min', name:'纸墨极简',hint:'纯白近黑，零视觉干扰',
+   sw:['#ffffff','#fcfcfc','#111111','#555555']},
+  {id:'cyber',name:'赛博终端',hint:'GitHub 深色，流水线最有工程感',
+   sw:['#0d1117','#161b22','#58a6ff','#e6edf3']},
+  {id:'swiss',name:'瑞士国际主义',hint:'纯黑白 + 瑞士红，网格严谨、零装饰',
+   sw:['#ffffff','#f6f6f6','#d81e05','#000000']},
+];
+const K_THEME='storyagents.theme.v1';
+function applyTheme(id){
+  const t=THEMES.find(x=>x.id===id)?id:'xuan';
+  document.documentElement.setAttribute('data-theme',t);
+  // 同步设置面板里的选中态（面板可能还没渲染，所以要判空）
+  document.querySelectorAll('#styleOpts [role=menuitemradio]').forEach(b=>
+    b.setAttribute('aria-checked',b.dataset.theme===t?'true':'false'));
+  const cur=document.getElementById('settingsCur');
+  if(cur)cur.textContent=THEMES.find(x=>x.id===t).name;
+  try{localStorage.setItem(K_THEME,t);}catch(e){}
+}
+/* ───────── 设置面板 ─────────
+   面板结构刻意做成「几节可增删」：以后加新功能只需要在 renderSettings()
+   里多 append 一段 HTML + 挂一次事件，不用改工具栏、不用改布局。
+   现有三节：界面风格、阅读密度（正文字号/行高）、动效（是否跟随系统偏好）。 */
+const K_FS='storyagents.fs.v1', K_LH='storyagents.lh.v1', K_MO='storyagents.motion.v1';
+const LH_DEF=1.85;   // 默认行高。滑块的值就是最终行高，不再叠乘 —— 见 --lh-eff 注释
+function applyReadPrefs(){
+  const fs=parseFloat(localStorage.getItem(K_FS)||'0')||0;
+  const lh=parseFloat(localStorage.getItem(K_LH)||'0')||0;
+  const r=document.documentElement.style;
+  if(fs)r.setProperty('--fs-scale',String(fs));
+  else r.removeProperty('--fs-scale');
+  r.setProperty('--lh-scale',String(lh||LH_DEF));
+  const b=document.getElementById('fsVal'),l=document.getElementById('lhVal');
+  if(b)b.textContent=fs?Math.round(fs*100)+'%':'默认';
+  if(l)l.textContent=lh?Number(lh).toFixed(2):'默认 '+LH_DEF.toFixed(2);
+}
+function applyMotionPref(){
+  const m=localStorage.getItem(K_MO)||'system';
+  const r=document.documentElement;
+  // 三态：跟随系统 / 强制关 / 强制开。用 data 属性驱动 CSS，不写死一套动画
+  r.setAttribute('data-motion',m);
+  const s=document.getElementById('motionSel');
+  if(s)s.value=m;
+}
+function renderSettings(){
+  const p=document.getElementById('settingsPanel');
+  if(!p)return;
+  /* 第 1 节：风格。role=menu + menuitemradio，读屏会播报「已选中 n 项，共 6 项」 */
+  const styleSec=document.createElement('div');
+  styleSec.className='settings-sec';
+  styleSec.innerHTML='<span class="sec-h" id="secStyle"><b>界面风格</b></span>'
+    +'<div id="styleOpts" role="menu" aria-labelledby="secStyle">'
+    +THEMES.map(t=>`<button type="button" class="style-opt" role="menuitemradio"
+        aria-checked="false" data-theme="${t.id}" title="${esc(t.hint)}">
+        <span class="style-sw" aria-hidden="true">${t.sw.map(c=>`<i style="background:${c}"></i>`).join('')}</span>
+        <span class="style-txt"><b>${esc(t.name)}</b><span>${esc(t.hint)}</span></span>
+      </button>`).join('')+'</div>';
+  /* 第 2 节：阅读密度。这是「以后加功能」的示范：只加一段 HTML + 一个事件 */
+  const readSec=document.createElement('div');
+  readSec.className='settings-sec';
+  readSec.innerHTML='<span class="sec-h" id="secRead"><b>阅读密度</b></span>'
+    +'<div class="setting-row">'
+    +'<span class="lab" id="labFs">正文字号<small>小说的主要阅读面</small></span>'
+    +'<input type="range" id="fsRange" min="0.85" max="1.4" step="0.05" value="1"'
+    +' aria-labelledby="labFs">'
+    +'<span class="val" id="fsVal">默认</span></div>'
+    +'<div class="setting-row">'
+    +'<span class="lab" id="labLh">正文行高<small>密集或疏朗，按屏幕大小调</small></span>'
+    +'<input type="range" id="lhRange" min="1.4" max="2.2" step="0.05" value="1.85"'
+    +' aria-labelledby="labLh">'
+    +'<span class="val" id="lhVal">默认</span></div>';
+  /* 第 3 节：动效 */
+  const motionSec=document.createElement('div');
+  motionSec.className='settings-sec';
+  motionSec.innerHTML='<span class="sec-h" id="secMotion"><b>动效</b></span>'
+    +'<div class="setting-row">'
+    +'<span class="lab" id="labMotion">动画<small>选「跟随系统」会自动尊重系统的减弱动效设置</small></span>'
+    +'<select id="motionSel" aria-labelledby="labMotion">'
+    +'<option value="system">跟随系统</option>'
+    +'<option value="off">全部关闭</option>'
+    +'<option value="on">始终开</option></select></div>'
+    +'<p class="settings-foot">面板内可用 <kbd>↑</kbd><kbd>↓</kbd> 移动、'
+    +'<kbd>Esc</kbd> 关闭。所有设置只存在本机浏览器里。</p>';
+  p.append(styleSec,readSec,motionSec);
+  // 事件：风格选项
+  p.querySelector('#styleOpts').addEventListener('click',e=>{
+    const b=e.target.closest('[data-theme]');
+    if(b)applyTheme(b.dataset.theme);
+  });
+  // 事件：滑块实时预览（input 事件拖动时就生效，松手才落盘）
+  const fsR=p.querySelector('#fsRange'),lhR=p.querySelector('#lhRange');
+  const syncFs=()=>{try{localStorage.setItem(K_FS,fsR.value);}catch(e){}applyReadPrefs();};
+  const syncLh=()=>{try{localStorage.setItem(K_LH,lhR.value);}catch(e){}applyReadPrefs();};
+  fsR.addEventListener('input',syncFs);fsR.addEventListener('change',syncFs);
+  lhR.addEventListener('input',syncLh);lhR.addEventListener('change',syncLh);
+  // 事件：动效三态
+  p.querySelector('#motionSel').addEventListener('change',e=>{
+    try{localStorage.setItem(K_MO,e.target.value);}catch(err){}
+    applyMotionPref();
+  });
+  // 回填已存的值（必须在 innerHTML 之后，否则会被默认值覆盖）
+  fsR.value=localStorage.getItem(K_FS)||'1';
+  lhR.value=localStorage.getItem(K_LH)||String(LH_DEF);
+  applyReadPrefs();
+  applyMotionPref();
+}
+function openSettings(){
+  const p=document.getElementById('settingsPanel'),b=document.getElementById('settingsBtn');
+  if(!p||!b||p.classList.contains('show'))return;
+  p.hidden=false;p.classList.add('show');
+  b.setAttribute('aria-expanded','true');
+  // 焦点落到当前风格项，键盘用户打开就能直接改
+  const cur=p.querySelector('[aria-checked="true"]')||p.querySelector('[role=menuitemradio]');
+  if(cur)cur.focus();
+}
+function closeSettings(){
+  const p=document.getElementById('settingsPanel'),b=document.getElementById('settingsBtn');
+  if(!p||!p.classList.contains('show'))return;
+  p.classList.remove('show');p.hidden=true;
+  b.setAttribute('aria-expanded','false');
+  /* 焦点归还设置按钮本身，不要归还「打开前的 activeElement」。
+     原因：用鼠标点开时 activeElement 往往还是 <body>（部分浏览器不把焦点
+     给按钮），记下来等于记了个 body，close 时 focus() 到 body 上焦点就丢了 ——
+     键盘用户接着 Tab 会从头开始，之前实测就踩到了这个。
+     菜单按钮只有一个触发器，WAI-ARIA 菜单按钮模式也正是这样规定的。 */
+  if(b)b.focus();
+}
+function initSettings(){
+  const b=document.getElementById('settingsBtn');
+  if(!b)return;
+  renderSettings();
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    document.getElementById('settingsPanel').classList.contains('show')?closeSettings():openSettings();
+  });
+  // 点击面板外 = 关闭
+  document.addEventListener('click',e=>{
+    const wrap=e.target.closest('.settings');
+    if(!wrap)closeSettings();
+  });
+  // Esc 关闭 + ↑↓ 在风格项间移动（标准 menu 行为）
+  document.addEventListener('keydown',e=>{
+    const p=document.getElementById('settingsPanel');
+    if(!p||!p.classList.contains('show'))return;
+    if(e.key==='Escape'){e.preventDefault();closeSettings();return;}
+    if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Home'&&e.key!=='End')return;
+    // 只在风格列表里用方向键；滑块/下拉保持原生行为
+    const opts=[...p.querySelectorAll('[role=menuitemradio]')];
+    if(!opts.includes(document.activeElement))return;
+    e.preventDefault();
+    const i=opts.indexOf(document.activeElement);
+    let n=-1;
+    if(e.key==='ArrowDown')n=(i+1)%opts.length;
+    else if(e.key==='ArrowUp')n=(i<=0?opts.length-1:i-1);
+    else if(e.key==='Home')n=0;
+    else n=opts.length-1;
+    opts[n].focus();
+  });
+  let saved='xuan';
+  try{saved=localStorage.getItem(K_THEME)||'xuan';}catch(e){}
+  applyTheme(saved);
 }
 
 /* ───────── 本机记忆：API 配置 + 表单草稿 + 上次创作进度 ─────────
@@ -557,6 +1161,12 @@ async function restoreSession(){
     +'<br>直接点「<b>续写下一章</b>」接着写（复用策划案与记忆库，不会重跑策划）；'
     +'想写全新的一篇，点上方「<b>新建故事</b>」。';
   if(runData.chapters.length)toast('已恢复上次进度：'+runData.chapters.length+' 章','ok');
+  /* 恢复出来的章节要立刻进目录与侧栏计数。
+     railTarget 用已定稿章数：本次还没开始跑，分母等于分子、进度条满格，
+     比"0/N"的空进度更符合"这里已经有东西了"的事实。 */
+  railOutcome=done?'ok':'idle';
+  railTarget=done;
+  renderRail();
 }
 
 /* ───────── 新建故事：清空会话 ───────── */
@@ -589,6 +1199,9 @@ function newStory(){
     if(P2)P2.innerHTML='';if(F2)F2.innerHTML='';cur=null;
     document.getElementById('board').style.display='none';
     setFormLocked(false);
+    /* 清空会话要把侧栏一起复位，否则新故事会顶着上一轮的状态与记忆库计数。 */
+    railOutcome='idle';railTarget=0;
+    renderRail();
     toast('已清空会话，可以开始新故事了','ok');
   });
 }
@@ -837,19 +1450,29 @@ const CHAR_FIELDS=[
   ["speech","说话习惯"],["motivation","动机"],["obsession","内心执念"],
   ["fear","恐惧"],["weakness","弱点"],["taboo","禁忌 / OOC 红线（绝不可违反，校对 Agent 用它把关）"]
 ];
+/* 人物卡是 JS 动态生成的，label 与 input 之间不能靠写死的 for，
+   所以给每张卡一个自增序号做 id 前缀，label 的 for 与 input 的 id 用同一套。 */
+let charSeq=0;
 function addChar(data){
   const box=document.getElementById('chars');
   const div=document.createElement('div');div.className='char-card';
+  const uid='c'+(++charSeq);
+  div.dataset.uid=uid;
+  /* 「⟳ 随机」与「删除」都补 aria-label：它们只有符号，念出来是「按钮」。 */
   div.innerHTML=`<div class="head"><b>人物</b>
     <span>
-      <button type="button" class="ico" onclick="randomizeChar(this)" title="随机生成这个人物的设定">⟳ 随机</button>
-      <button type="button" class="mini" onclick="this.closest('.char-card').remove();renumber()">删除</button>
+      <button type="button" class="ico" onclick="randomizeChar(this)"
+        title="随机生成这个人物的设定"
+        aria-label="随机生成这个人物的设定">⟳ 随机</button>
+      <button type="button" class="mini" onclick="this.closest('.char-card').remove();renumber()"
+        aria-label="删除这张人物卡">删除</button>
     </span></div>
     <div class="grid2">${CHAR_FIELDS.map(([k,l])=>{
       const v=(data&&data[k])||'';
-      if(k==='taboo')return `<div style="grid-column:1/-1"><label>${l}</label>
-        <textarea rows="2" data-k="${k}">${esc(v)}</textarea></div>`;
-      return `<div><label>${l}</label><input type="text" data-k="${k}"
+      const fid=uid+'-'+k;
+      if(k==='taboo')return `<div style="grid-column:1/-1"><label for="${fid}">${l}</label>
+        <textarea rows="2" id="${fid}" data-k="${k}">${esc(v)}</textarea></div>`;
+      return `<div><label for="${fid}">${l}</label><input type="text" id="${fid}" data-k="${k}"
         ${CHAR_LIST[k]?`list="${CHAR_LIST[k]}"`:''} value="${esc(v)}"></div>`;
     }).join('')}</div>`;
   box.appendChild(div);renumber();
@@ -967,7 +1590,11 @@ function download(name,content,type){
 function togglePw(btn){
   const el=document.getElementById('api_key');
   el.type=el.type==='password'?'text':'password';
-  btn.textContent=el.type==='password'?'显示':'隐藏';
+  const show=el.type==='password';
+  btn.textContent=show?'显示':'隐藏';
+  // aria-pressed 告诉读屏「现在是按下了还是没按下」，光改文案不够
+  btn.setAttribute('aria-pressed',show?'false':'true');
+  btn.setAttribute('aria-label',show?'显示 API Key':'隐藏 API Key');
 }
 
 /* ───────── 平台下拉 ───────── */
@@ -983,16 +1610,18 @@ function onProviderChange(silent){
     urlEl.readOnly=false;modelEl.readOnly=false;
     document.getElementById('resolvedInfo').innerHTML='自定义模式：请自行填写该平台的 Base URL 与模型名';
     renderModelPicker();
+    renderRail();                       // 自定义模式下右栏不能显示成"未选择"
     if(!silent)toast('自定义模式：请自行填写地址与模型名');
     return;
   }
-  if(!p){renderModelPicker();updateResolved();return;}
+  if(!p){renderModelPicker();updateResolved();renderRail();return;}
   urlEl.value=p.url;modelEl.value=p.model;
   // 只锁地址防手误；模型名始终可编辑——可点 ▾ 换版本，也可手填任意模型 ID
   urlEl.readOnly=(id!==''&&id!=='deepseek');
   modelEl.readOnly=false;
   renderModelPicker();
   updateResolved();
+  renderRail();
   if(id&&!silent)toast('已选「'+p.name+'」，模型名点 ▾ 可换版本','ok');
 }
 /* ───────── 模型版本选择器 ───────── */
@@ -1016,25 +1645,46 @@ function renderModelPicker(){
         :'该平台暂无内置版本清单，直接手填模型名即可。')+'</div>';
     return;
   }
+  /* 选项用 <button> 而不是 <div>：原生可聚焦、可回车触发，键盘用户能进去。
+     说明文字给了一份 sr-only 副本给读屏，视觉那份 aria-hidden 免得读两遍。 */
   box.innerHTML=list.map(([m,d])=>{
     const ft=isForceThink(m);
-    return '<div class="pi '+(m===cur?'cur':'')+'" data-m="'+esc(m)+
-      '" onclick="pickModel(this.dataset.m)">'+
-      '<b>'+esc(m)+'</b>'+
-      (ft?'<em class="ftbadge">强制思考 · 较慢</em>':'')+
-      (d?'<span>'+esc(d)+'</span>':'')+'</div>';
+    return '<button type="button" class="pi'+(m===cur?' cur':'')+'" role="option"'
+      +' aria-selected="'+(m===cur?'true':'false')+'" data-m="'+esc(m)+'">'
+      +'<b>'+esc(m)+'</b>'
+      +'<span class="sr-only">'+(d?esc(d):'（无说明）')+'</span>'
+      +(ft?'<em class="ftbadge">强制思考 · 较慢</em>':'')
+      +(d?'<span aria-hidden="true">'+esc(d)+'</span>':'')+'</button>';
   }).join('');
 }
+/* 打开/关闭选择器：aria-expanded 必须与实际状态同步，否则读屏播报反的。
+   打开后焦点落到当前选中项（没有就第一项），键盘用户能直接继续操作。 */
 function toggleModelPicker(ev){
   if(ev)ev.stopPropagation();
   const box=document.getElementById('modelPicker');
-  if(box.classList.contains('show')){box.classList.remove('show');return;}
+  if(box.classList.contains('show')){closeModelPicker();return;}
   renderModelPicker();box.classList.add('show');
+  setPickerExpanded(true);
+  const cur=box.querySelector('.pi.cur')||box.querySelector('.pi');
+  if(cur)cur.focus();
+}
+function setPickerExpanded(open){
+  const v=open?'true':'false';
+  const b=document.querySelector('.pick-btn'),i=document.getElementById('model');
+  if(b)b.setAttribute('aria-expanded',v);
+  if(i)i.setAttribute('aria-expanded',v);
+}
+function closeModelPicker(){
+  const box=document.getElementById('modelPicker');
+  if(!box.classList.contains('show'))return;
+  box.classList.remove('show');
+  setPickerExpanded(false);
 }
 function pickModel(name){
   if(!name)return;
   document.getElementById('model').value=name;
-  document.getElementById('modelPicker').classList.remove('show');
+  closeModelPicker();
+  document.getElementById('model').focus();
   updateResolved();
   if(isForceThink(name)){
     toast('「'+name+'」会强制开启思考且关不掉，写长文较慢；'+
@@ -1043,11 +1693,42 @@ function pickModel(name){
     toast('已选模型：'+name,'ok');
   }
 }
+/* 事件委托：选项是 button，用 click 统一处理，别再内联 onclick。 */
+document.getElementById('modelPicker').addEventListener('click',function(e){
+  const b=e.target.closest('.pi[data-m]');
+  if(b)pickModel(b.dataset.m);
+});
+/* 列表内键盘导航：↑↓ 移动、Home/End 首尾、Esc 收起（WCAG 4.1.2）。
+   原先这里只有鼠标能点，键盘完全进不去。 */
+document.getElementById('modelPicker').addEventListener('keydown',function(e){
+  const items=[...this.querySelectorAll('.pi')];
+  if(!items.length)return;
+  const i=items.indexOf(document.activeElement);
+  let n=-1;
+  if(e.key==='ArrowDown')n=(i+1)%items.length;
+  else if(e.key==='ArrowUp')n=(i<=0?items.length-1:i-1);
+  else if(e.key==='Home')n=0;
+  else if(e.key==='End')n=items.length-1;
+  else if(e.key==='Escape'){e.preventDefault();closeModelPicker();
+    document.getElementById('model').focus();return;}
+  else return;
+  e.preventDefault();
+  items[n].focus();
+});
 document.addEventListener('click',function(e){
   const box=document.getElementById('modelPicker');
   if(!box||!box.classList.contains('show'))return;
   if(box.contains(e.target)||e.target.id==='model'||e.target.classList.contains('pick-btn'))return;
-  box.classList.remove('show');
+  closeModelPicker();
+});
+/* 输入框内：↑↓ 展开候选，Esc 收起（配合 role=combobox） */
+document.getElementById('model').addEventListener('keydown',function(e){
+  const box=document.getElementById('modelPicker');
+  if((e.key==='ArrowUp'||e.key==='ArrowDown')&&!box.classList.contains('show')){
+    e.preventDefault();toggleModelPicker();
+  }else if(e.key==='Escape'){
+    closeModelPicker();
+  }
 });
 function modelDesc(id,name){
   const p=PROVIDERS.find(x=>x.id===id);
@@ -1106,9 +1787,11 @@ async function testConnection(){
   hint.textContent='正在真实调用一次模型，思考型模型可能要十几秒';
   box.className='pending';box.style.display='block';
   box.innerHTML='正在连接 <code>'+esc(f.base_url||'（平台默认地址）')+'</code> ，模型 <code>'+esc(model)+'</code> …';
+  /* 平台可列出的模型：做成 button 而不是 span，键盘能聚焦、能回车触发 */
   const listHtml=(arr)=>'<div style="margin-top:6px">平台可列出这些模型，点一下即可填入：'+
     '<div class="mini-list">'+arr.map(m=>
-      '<span data-m="'+esc(m)+'" onclick="pickModel(this.dataset.m)">'+esc(m)+'</span>').join('')+
+      '<button type="button" data-m="'+esc(m)+'" onclick="pickModel(this.dataset.m)">'
+      +esc(m)+'</button>').join('')+
     '</div></div>';
   try{
     const resp=await fetch('/api/test_connection',{method:'POST',
@@ -1144,6 +1827,8 @@ async function testConnection(){
 function onMockChange(){
   const on=document.getElementById('mock').checked;
   document.getElementById('mockWarn').style.display=on?'':'none';
+  /* 右栏把 Mock 标成橙色警示：它是"模型怎么不工作"的头号误判来源。 */
+  renderRail();
 }
 
 /* ───────── 需求 AI 润色 ───────── */
@@ -1228,14 +1913,25 @@ function applyFields(section,fields){
 /* ───────── 流水线看板 ───────── */
 const P=document.getElementById('progress'),F=document.getElementById('flowNow'),R=document.getElementById('result');
 let running=false,runData={outline:null,chapters:[],memory:null,mock:false};
+/* 状态行开头的 emoji（🧭✍🔍⚙■ 等）只是视觉装饰 —— 后面的中文已经把
+   阶段、结果、严重程度说全了。不加 aria-hidden 的话读屏会念成
+   「指南针 撰稿 Agent…」，反而更难听。仅处理行首那几个符号。 */
+const DECOR=/^([🧭✍🔍📝✅⚠⚙👤■•]+)(\s*)/u;
+function hideDecor(html){
+  return String(html).replace(DECOR,(m,syms,sp)=>
+    '<span aria-hidden="true">'+syms+'</span>'+sp);
+}
 function step(html,cls=''){
-  const d=document.createElement('div');d.className='step '+cls;d.innerHTML=html;
+  const d=document.createElement('div');d.className='step '+cls;
+  d.innerHTML=hideDecor(html);
   P.appendChild(d);document.getElementById('board').scrollTop=1e9;return d;
 }
 let cur=null;
 let progEl=null;   // 当前行末尾的进度徽标
-function flow(html){F.innerHTML='<span class="spin">⚙</span> '+html;}
-function doneCur(html,cls){if(cur){cur.innerHTML=html;cur.className='step '+cls;cur=null;}
+/* flow() 是「阶段推进」的唯一入口（看板顶部那行），所以侧栏也挂在这里刷新：
+   阶段文案直接读 #flowNow，不另存一份，就不会出现两处说法不一致。 */
+function flow(html){F.innerHTML='<span class="spin" aria-hidden="true">⚙</span> '+html;renderRail();}
+function doneCur(html,cls){if(cur){cur.innerHTML=hideDecor(html);cur.className='step '+cls;cur=null;}
   progEl=null;}
 
 /* 流式生成进度：模型每吐一段就刷新一次，让用户知道"它还在干活" */
@@ -1380,7 +2076,7 @@ async function previewOutline(){
   const f=collectForm();
   if(!f.requirement){toast('核心需求不能为空','err');return;}
   running=true;const pv=document.getElementById('previewBtn');
-  pv.disabled=true;boardOpen();F.innerHTML='<span class="spin">⚙</span> 策划 Agent 生成大纲中…';
+  pv.disabled=true;boardOpen();F.innerHTML='<span class="spin" aria-hidden="true">⚙</span> 策划 Agent 生成大纲中…';
   try{
     const resp=await fetch('/api/outline_preview',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(f)});
@@ -1408,6 +2104,7 @@ async function applyMemoryEdit(){
   const m=parseMemory();
   if(!m){hint.textContent='未保存（格式有误）';return;}
   runData.memory=m;                     // 即便服务端保存失败，本次「续写」也会用它
+  renderRail();                         // 侧栏的记账条数要跟着编辑走
   hint.textContent='保存中…';
   try{
     const resp=await fetch('/api/session/memory',{method:'POST',
@@ -1458,6 +2155,9 @@ function handle(ev){
           +(ev.mock?'（不调用真实模型，正文为固定示例文本）':''));
       if(ev.mock)step('⚠ Mock 模式输出的章节是预先写死的示例文本，'+
         '所以每次结果都一样——这不是故障。要看真实创作，请取消勾选 Mock 并填 API Key。','bad');
+      /* 目标章数 = 已有 + 本次新增。续写时 ev.chapters 只是增量，
+         直接拿它当分母会算出「3/1 章」这种荒谬进度。 */
+      setRailOutcome('run',runData.chapters.length+(ev.chapters||0));
       break;
     case 'chapter_start':
       flow('第 '+ev.index+' 章流水线运行中');
@@ -1521,6 +2221,9 @@ function handle(ev){
       renderChapter(chapter);
       document.getElementById('contBtn').disabled=false;
       document.getElementById('resultTag').textContent='已定稿 '+runData.chapters.length+' 章';
+      /* 章节进了正文，但看板顶部那行没变（flow 在 chapter_start 才调），
+         所以这里要显式刷一次侧栏，否则目录里迟迟不出现新章。 */
+      renderRail();
       break;}
     case 'all_done':
       runData.memory=ev.memory;runData.outline=ev.outline;runData.mock=!!ev.mock;
@@ -1532,6 +2235,7 @@ function handle(ev){
       step('<b>全部完成</b>，产物已保存到 '+esc(ev.out_dir),'ok');
       if(ev.mock)step('<b>注意</b>：本次为 Mock 模式，正文是固定示例文本，'+
         '仅供验证流程。要写真实作品请取消勾选 Mock 并填 API Key。','bad');
+      setRailOutcome('ok');
       break;
     case 'stopped':{
       // 用户点了「停止生成」：后端在章与章之间退出。已定稿的章节都已落盘，
@@ -1548,6 +2252,7 @@ function handle(ev){
       step('<b>已按你的要求停止</b>：共 '+ev.total_chapters+' 章定稿，产物已保存到 '
         +esc(ev.out_dir||'')+'。可以直接点「续写下一章」接着写。','ok');
       toast('已停止，保留 '+ev.total_chapters+' 章','ok');
+      setRailOutcome('stop');
       break;}
     case 'error':
       if(cur)doneCur('⚠ 流水线中断','bad');
@@ -1558,6 +2263,7 @@ function handle(ev){
       if(ev.done_chapters)step('已定稿的 '+ev.done_chapters+
         ' 章已保留，可以直接点「续写下一章」接着写。','ok');
       toast('创作中断：'+String(ev.message||'').split('\n')[0],'err');
+      setRailOutcome('bad');
       break;
   }
 }
@@ -1565,7 +2271,7 @@ function handle(ev){
 /* ───────── 结果面板 ───────── */
 function renderChapter(ch){
   R.insertAdjacentHTML('beforeend',`
-    <details class="chapter" open>
+    <details class="chapter" id="ch-${ch.index}" open>
       <summary><b>第${ch.index}章 ${esc(ch.title)}</b>
         <span class="badge ok">重写 ${ch.rounds} 轮</span>
         ${(ch.style&&ch.style.findings&&ch.style.findings.length)?
@@ -1630,10 +2336,199 @@ async function readerFeedback(idx,btn){
   finally{btn.disabled=false;btn.textContent='读者反馈';}
 }
 
+/* ───────── 两侧栏 ─────────
+   左栏＝目录（页面只有 5 张卡片但很长，右侧留白正好放导航）；
+   右栏＝运行状态。所有读数都从 runData 与 DOM 现算，不另存一份状态，
+   否则 SSE 事件漏掉一处就会和看板对不上（这类"两份真相"最后必然漂）。
+   窄屏（<1240px）CSS 已隐藏，这里照常跑，开销可忽略。 */
+
+/* 目录项的目标不存在或被 display:none 藏起来时，一并藏掉该条目 ——
+   否则会出现"点了没反应"的死链（看板/记忆库/结果三块初始就是隐藏的）。 */
+function syncTocItems(){
+  const items=document.querySelectorAll('#railL .toc a');
+  items.forEach(a=>{
+    const t=document.getElementById(a.getAttribute('href').slice(1));
+    const li=a.parentElement;
+    const hide=!t||t.style.display==='none'||getComputedStyle(t).display==='none';
+    li.style.display=hide?'none':'';
+  });
+}
+function renderTocChapters(){
+  const box=document.getElementById('tocChapterList'),
+        blk=document.getElementById('tocChapters');
+  if(!box)return;
+  const chs=runData.chapters;
+  blk.hidden=!chs.length;
+  if(!chs.length){box.innerHTML='';return;}
+  box.innerHTML=chs.map(c=>'<li><a href="#ch-'+c.index+'">'
+    +'<span class="cnum">'+c.index+'</span>'+esc(c.title||'（未命名）')+'</a></li>').join('');
+}
+/* 滚动高亮：取「最后一个顶边越过阈值」的目标作为当前节。
+   不用 IntersectionObserver：它给的是"进入视口"的边沿事件，
+   一屏内跨过多个小节时反而是"最后离开的那个"高亮，顺序会反。
+   阈值 120px 而不是 0：吸顶侧栏自己就占了顶部 14px 起的一段，
+   用 0 会在 section 顶边恰贴着视口顶时判给上一节。 */
+let tocPending=false;
+function syncTocCurrent(){
+  const links=Array.from(document.querySelectorAll('#railL .toc a'))
+    .filter(a=>a.parentElement.style.display!=='none');
+  /* 已经滚到底：最后一节（通常是「创作结果」）顶边永远到不了视口顶部，
+     纯靠阈值判定会把它前面那一节一直留着高亮。所以先判到底，再取
+     「最后一个仍然可见的」作为当前节。 */
+  const atBottom=window.innerHeight+window.scrollY
+    >=document.documentElement.scrollHeight-4;
+  let cur=null;
+  if(atBottom){
+    for(let i=links.length-1;i>=0;i--){
+      const t=document.getElementById(links[i].getAttribute('href').slice(1));
+      if(t&&t.getBoundingClientRect().top<window.innerHeight){cur=links[i];break;}
+    }
+  }else{
+    links.forEach(a=>{
+      const t=document.getElementById(a.getAttribute('href').slice(1));
+      if(t&&t.getBoundingClientRect().top<=120)cur=a;
+    });
+  }
+  links.forEach(a=>{
+    if(a===cur)a.setAttribute('aria-current','true');
+    else a.removeAttribute('aria-current');
+  });
+}
+function onScrollToc(){
+  if(tocPending)return;
+  tocPending=true;
+  requestAnimationFrame(()=>{tocPending=false;syncTocCurrent();});
+}
+/* 目录点击：把目标的所有祖先 details 都展开，再滚动。
+   为什么必须展开祖先而不只是目标自己：章节卡片在 #resultCard 这个
+   <details> 里，而它默认是收起的。收起的 details 内容不参与布局，
+   getBoundingClientRect 全返回 0，scrollIntoView 于是原地不动 ——
+   表现为"点了目录没反应"。 */
+function openAncestors(el){
+  for(let p=el.parentElement;p&&p!==document.body;p=p.parentElement){
+    if(p.tagName==='DETAILS')p.open=true;
+  }
+  if(el.tagName==='DETAILS')el.open=true;
+}
+function initToc(){
+  const rail=document.getElementById('railL');
+  if(!rail)return;
+  rail.addEventListener('click',e=>{
+    const a=e.target.closest('a[href^="#"]');
+    if(!a)return;
+    const t=document.getElementById(a.getAttribute('href').slice(1));
+    if(!t)return;
+    e.preventDefault();
+    openAncestors(t);
+    syncTocItems();                       // 目标可能刚被展开，重新算一次可见性
+    t.scrollIntoView({block:'start'});
+    /* 焦点跟着走：只滚动不移焦，键盘用户按完 Tab 还停在目录里，
+       下一次 Tab 又跳回正文，方向感全乱（WCAG 2.4.3）。 */
+    t.setAttribute('tabindex','-1');
+    t.focus({preventScroll:true});
+    syncTocCurrent();
+  });
+  window.addEventListener('scroll',onScrollToc,{passive:true});
+  window.addEventListener('resize',()=>{syncTocItems();syncTocCurrent();});
+  syncTocItems();syncTocCurrent();
+}
+
+/* 右栏。railOutcome 由 handle() 的四类终止事件写入，
+   别处不写 —— 状态机只留一个写入口，才不会出现"显示已完成其实已中断"。 */
+let railOutcome='idle',railTarget=0;
+function setRailOutcome(kind,target){
+  railOutcome=kind;
+  if(typeof target==='number'&&target>0)railTarget=target;
+  renderRail();
+}
+function renderRail(){
+  const dot=document.getElementById('railDot');
+  if(!dot)return;
+  const chs=runData.chapters,done=chs.length;
+  const total=Math.max(railTarget,done);
+  /* 状态点：灰=空闲 / 主色=在跑 / 绿=已完成 / 黄=被叫停 / 红=出错 */
+  const map={idle:'',run:'run',ok:'ok',stop:'stop',bad:'bad'};
+  dot.className='rdot'+(map[railOutcome]?' '+map[railOutcome]:'');
+  document.getElementById('railState').textContent=
+    railOutcome==='run'?'正在创作':railOutcome==='ok'?'已完成'
+    :railOutcome==='stop'?'已停止':railOutcome==='bad'?'已中断':'空闲';
+
+  /* 阶段文案直接取看板的 flowNow —— 那是唯一权威来源，
+     在这里另写一份必然出现"看板说润色、侧栏说校对"的情况。 */
+  const F2=document.getElementById('flowNow');
+  let stage=F2?F2.textContent.trim():'';
+  if(stage)stage=stage.replace(/^[⚙\s]+/,'');
+  document.getElementById('railStage').textContent=
+    stage||(done?'本次已定稿 '+done+' 章。':'尚未开始。填好需求后点「开始创作」。');
+
+  const pct=total>0?Math.min(100,Math.round(done/total*100)):0;
+  document.getElementById('railBar').style.width=pct+'%';
+  document.getElementById('railDone').textContent=done+' / '+total+' 章';
+  const words=chs.reduce((n,c)=>n+(c.text||'').length,0);
+  document.getElementById('railWords').textContent=words?words.toLocaleString('zh-CN')+' 字':'0';
+
+  const pv=document.getElementById('provider'),mv=document.getElementById('model');
+  const pn=pv&&pv.selectedIndex>=0?pv.options[pv.selectedIndex].text.replace(/^—\s*/,''):'';
+  const mn=mv?mv.value.trim():'';
+  document.getElementById('railModel').textContent=
+    (pn&&pn!=='请选择平台')?(pn+(mn?' · '+mn:'')):'未选择';
+
+  const mock=document.getElementById('mock'),th=document.getElementById('thinking');
+  const mode=mock&&mock.checked?'Mock 示例':(th&&th.checked?'真实 · 深度思考':'真实创作');
+  const mb=document.getElementById('railMode');
+  mb.textContent=mode;
+  mb.className=mock&&mock.checked?'warn':'';
+
+  /* 本轮说明：Mock 必须显眼地标出来，它是误判"模型坏了"的头号原因。 */
+  document.getElementById('railNote').textContent=
+    (mock&&mock.checked)
+      ?'当前是 Mock 模式：正文是写死的示例文本，不调用任何模型。'
+      :(runData.mock?'上一次运行是 Mock 模式，本页正文均为示例文本。'
+        :(done?'内容已保存到 outputs_web 目录，可随时导出 Markdown。'
+          :'开始前请确认：API Key、平台、模型名。'));
+
+  renderRailMemory();
+  syncTocItems();renderTocChapters();
+}
+/* 记忆库速览。超期判定与 nodes._stale_foreshadows 同规则
+   （未回收 且 当前章 - 最后推进章 ≥ FORESHADOW_STALE_CHAPTERS=5），
+   阈值硬编码 5 是为了不把 config 暴露给前端；改 config 时这里要一起改。 */
+const RAIL_STALE=5;
+function renderRailMemory(){
+  const blk=document.getElementById('railMemBlk');
+  if(!blk)return;
+  const m=runData.memory;
+  const arr=k=>(m&&Array.isArray(m[k]))?m[k]:[];
+  const sums=arr('chapter_summaries'),fs=arr('foreshadow_pool'),
+        cs=arr('character_states'),it=arr('items'),se=arr('settings');
+  blk.hidden=!(sums.length||fs.length||cs.length||it.length||se.length);
+  if(blk.hidden)return;
+  const cur=runData.chapters.reduce((n,c)=>Math.max(n,c.index||0),0);
+  const open=fs.filter(f=>(f.status||'open')!=='resolved');
+  const over=open.filter(f=>{
+    const last=Number(f.last_advanced_chapter||f.chapter||0);
+    return cur-last>=RAIL_STALE;
+  });
+  document.getElementById('memSum').textContent=sums.length+' 章';
+  document.getElementById('memFs').textContent=fs.length+'（'+open.length+'）';
+  const ov=document.getElementById('memFsOver');
+  /* 始终带「条」单位：同栏其他行都带（"3 章"/"2 人"），这一行光秃秃一个数字
+     会被误读成章节号。另外 0 条时不用红色 —— 没超期不是错误。 */
+  ov.textContent=over.length+' 条';
+  ov.className=over.length?'warn':'';
+  ov.title=over.length?over.map(f=>(f.id||'?')+'：'+String(f.desc||'').slice(0,28)).join('\n'):'';
+  document.getElementById('memChar').textContent=cs.length+' 人';
+  document.getElementById('memItem').textContent=it.length+' 件';
+  document.getElementById('memSet').textContent=se.length+' 条';
+}
+
 /* ───────── 初始化 ───────── */
 (function init(){
   buildDatalists();
   initProviders();
+  initSettings();                  // 先定主题与阅读偏好，避免首帧闪一下默认色
+  initToc();                       // 侧栏目录（要在 restoreSession 之前，
+                                   //   否则恢复出来的章节进不了目录）
   Object.keys(NAMES).forEach(renderChips);
   document.getElementById('provider').value='deepseek';   // 默认选中官方，地址留空即可
   onProviderChange(true);
@@ -1651,6 +2546,11 @@ async function readerFeedback(idx,btn){
   document.addEventListener('input',autoSave,true);
   document.addEventListener('change',autoSave,true);
   window.addEventListener('beforeunload',()=>{try{saveLlm();saveDraft();}catch(e){}});
+
+  // 模型名可以手打（不在清单里的模型也能用），思考开关也会改右栏的「模式」读数。
+  // 用 input 而不是 change：边打边显示才对，change 要等失焦才更新。
+  document.getElementById('model').addEventListener('input',renderRail);
+  document.getElementById('thinking').addEventListener('change',renderRail);
 
   // ③ 再恢复上次的创作进度（策划案 / 已定稿章节 / 记忆库，来自服务端存档）
   restoreSession();
